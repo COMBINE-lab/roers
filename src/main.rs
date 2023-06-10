@@ -239,10 +239,10 @@ fn make_ref(
 
     // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
-    let gr = if gff3 {
-        Grangers::from_gff(gtf_path.as_path(), true)?
+    let (gr, file_type) = if gff3 {
+        (Grangers::from_gff(gtf_path.as_path(), true)?, "GFF3")
     } else {
-        Grangers::from_gtf(gtf_path.as_path(), true)?
+        (Grangers::from_gtf(gtf_path.as_path(), true)?, "GTF")
     };
 
     let duration: Duration = start.elapsed();
@@ -259,10 +259,11 @@ fn make_ref(
     // we then make sure that the gene_id and gene_name fields are not both missing
     if fc.gene_id().is_none() && fc.gene_name().is_none() {
         anyhow::bail!(
-            "The input GTF/GFF3 file must have either gene_id or gene_name field. Cannot proceed"
+            "The input {} file must have either gene_id or gene_name field. Cannot proceed",
+            file_type
         );
     } else if fc.gene_id().is_none() {
-        warn!("The input GTF/GFF3 file do not have a gene_id field. We will use gene_name as gene_id");
+        warn!("The input {} file do not have a gene_id field. We will use gene_name as gene_id", file_type);
         // we get gene name and rename it to gene_id
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");
@@ -271,7 +272,8 @@ fn make_ref(
         df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
-            "The input GTF/GFF3 file does not have a gene_name field. Roers will use gene_id as gene_name."
+            "The input {} file does not have a gene_name field. Roers will use gene_id as gene_name.",
+            file_type
         );
         // we get gene id and rename it to gene_name
         let mut gene_name = df.column(fc.gene_id().unwrap())?.clone();

@@ -48,7 +48,7 @@ pub enum Commands {
     MakeRef {
         /// The path to a genome fasta file.
         genome: PathBuf,
-        /// The path to a gene annotation gtf file.
+        /// The path to a gene annotation gtf/gff3 file.
         genes: PathBuf,
         /// The path to the output directory (will be created if it doesn't exist).
         out_dir: PathBuf,
@@ -120,6 +120,10 @@ pub enum Commands {
             display_order = 3,
         )]
         extra_unspliced: Option<PathBuf>,
+
+        /// Denotes that the input annotation is a GFF3 (instead of GTF) file
+        #[arg(long = "gff3", display_order = 4)]
+        gff3: bool
     },
 }
 
@@ -162,6 +166,7 @@ fn main() -> anyhow::Result<()> {
             dedup_seqs,
             extra_spliced,
             extra_unspliced,
+            gff3,
         } => {
             make_ref(
                 genome,
@@ -175,6 +180,7 @@ fn main() -> anyhow::Result<()> {
                 dedup_seqs,
                 extra_spliced,
                 extra_unspliced,
+                gff3,
             )
         }?,
     }
@@ -198,6 +204,7 @@ fn make_ref(
     _dedup_seqs: bool,
     extra_spliced: Option<PathBuf>,
     extra_unspliced: Option<PathBuf>,
+    _gff3: bool
 ) -> anyhow::Result<()> {
     // if nothing to build, then exit
     if no_transcript & augmented_sequences.is_none() {
@@ -230,7 +237,7 @@ fn make_ref(
     }
     let flank_length = (read_length - flank_trim_length) as i32;
 
-    // 1. we read the gtf file as grangers. This will make sure that the eight fields are there.
+    // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
     let gr = Grangers::from_gtf(gtf_path.as_path(), true)?;
     let duration: Duration = start.elapsed();
@@ -247,10 +254,10 @@ fn make_ref(
     // we then make sure that the gene_id and gene_name fields are not both missing
     if fc.gene_id().is_none() && fc.gene_name().is_none() {
         anyhow::bail!(
-            "The input GTF file must have either gene_id or gene_name field. Cannot proceed"
+            "The input GTF/GFF3 file must have either gene_id or gene_name field. Cannot proceed"
         );
     } else if fc.gene_id().is_none() {
-        warn!("The input GTF file do not have a gene_id field. We will use gene_name as gene_id");
+        warn!("The input GTF/GFF3 file do not have a gene_id field. We will use gene_name as gene_id");
         // we get gene name and rename it to gene_id
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");
@@ -259,7 +266,7 @@ fn make_ref(
         df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
-            "The input GTF file does not have a gene_name field. Roers will use gene_id as gene_name."
+            "The input GTF/GFF3 file does not have a gene_name field. Roers will use gene_id as gene_name."
         );
         // we get gene id and rename it to gene_name
         let mut gene_name = df.column(fc.gene_id().unwrap())?.clone();

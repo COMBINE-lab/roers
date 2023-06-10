@@ -1,18 +1,18 @@
+use anyhow::Context;
 use grangers::grangers::{options, Grangers};
+use noodles;
 use peak_alloc::PeakAlloc;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
-use tracing::{warn, debug, info};
-use noodles;
-use anyhow::Context;
 
 #[global_allocator]
 static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
-use clap::{builder::ArgPredicate, ArgGroup, Args, Subcommand, command, Parser};
+use clap::{builder::ArgPredicate, command, ArgGroup, Args, Parser, Subcommand};
 
 /// The type of sequences we might include in the output reference FASTA file
 /// to map against for quantification with
@@ -67,10 +67,7 @@ pub enum Commands {
         augmented_sequences: Option<Vec<SequenceType>>,
 
         /// A flag of not including spliced transcripts in the output FASTA file. (usually there should be a good reason to do so)
-        #[arg(
-            long,
-            display_order = 3,
-        )]
+        #[arg(long, display_order = 3)]
         no_transcript: bool,
 
         /// The read length of the single-cell experiment being processed (determines flank size).
@@ -80,61 +77,49 @@ pub enum Commands {
             help_heading = "Intronic Sequence Options",
             display_order = 1,
             default_value_t = 91,
-            requires_if("intronic", "augmented_sequences"),
+            requires_if("intronic", "augmented_sequences")
         )]
         read_length: i64,
 
-        /// Determines the amount subtracted from the read length to get the flank length.
+        /// Determines the length of sequence subtracted from the read length to obtain the flank length.
         #[arg(
             long,
             help_heading = "Intronic Sequence Options",
             display_order = 2,
             default_value_t = 5,
-            requires_if("intronic", "augmented_sequences"),
+            requires_if("intronic", "augmented_sequences")
         )]
         flank_trim_length: i64,
 
-        /// A flag indicates whether flank lengths will be considered when merging introns.
+        /// Indicates whether flank lengths will be considered when merging introns.
         #[arg(
             long,
             help_heading = "Intronic Sequence Options",
             display_order = 3,
-            requires_if("intronic", "augmented_sequences"),
+            requires_if("intronic", "augmented_sequences")
         )]
         no_flanking_merge: bool,
 
         /// The file name prefix of the generated output files.
-        #[arg(
-            long,
-            default_value = "augmented_ref",
-            display_order = 2,
-        )]
+        #[arg(long, default_value = "augmented_ref", display_order = 2)]
         filename_prefix: Option<String>,
 
-        /// A flag indicates whether identical sequences will be deduplicated.
-        #[arg(
-            long = "dedup",
-            display_order = 1,
-        )]
+        /// Indicates whether identical sequences will be deduplicated.
+        #[arg(long = "dedup", display_order = 1)]
         dedup_seqs: bool,
 
         /// The path to an extra spliced sequence fasta file.
-        #[arg(
-            long,
-            help_heading = "Extra Sequence Files",
-            display_order = 3,
-        )]
+        #[arg(long, help_heading = "Extra Spliced Sequence Files", display_order = 3)]
         extra_spliced: Option<PathBuf>,
 
         /// The path to an extra unspliced sequence fasta file.
         #[arg(
             // short,
             long,
-            help_heading = "Extra Sequence Files",
+            help_heading = "Extra Unspliced Sequence Files",
             display_order = 3,
         )]
         extra_unspliced: Option<PathBuf>,
-
     },
 }
 
@@ -164,9 +149,34 @@ fn main() -> anyhow::Result<()> {
     let cli_args = Cli::parse();
 
     match cli_args.command {
-        Commands::MakeRef { genome, genes, out_dir, augmented_sequences, no_transcript, read_length, flank_trim_length, no_flanking_merge, filename_prefix, dedup_seqs, extra_spliced, extra_unspliced } => {
-            make_ref(genome, genes, out_dir, augmented_sequences, no_transcript, read_length, flank_trim_length, no_flanking_merge, dedup_seqs, extra_spliced, extra_unspliced)
-        }?
+        Commands::MakeRef {
+            genome,
+            genes,
+            out_dir,
+            augmented_sequences,
+            no_transcript,
+            read_length,
+            flank_trim_length,
+            no_flanking_merge,
+            filename_prefix,
+            dedup_seqs,
+            extra_spliced,
+            extra_unspliced,
+        } => {
+            make_ref(
+                genome,
+                genes,
+                out_dir,
+                augmented_sequences,
+                no_transcript,
+                read_length,
+                flank_trim_length,
+                no_flanking_merge,
+                dedup_seqs,
+                extra_spliced,
+                extra_unspliced,
+            )
+        }?,
     }
 
     // get stats
@@ -177,18 +187,18 @@ fn main() -> anyhow::Result<()> {
 
 fn make_ref(
     genome_path: PathBuf,
-    gtf_path: PathBuf, 
-    out_dir: PathBuf, 
-    augmented_sequences: Option<Vec<SequenceType>>, 
-    no_transcript: bool, 
-    read_length: i64, 
-    flank_trim_length: i64, 
-    no_flanking_merge: bool, 
-    // filename_prefix: Option<String>, 
-    _dedup_seqs: bool, 
-    extra_spliced: Option<PathBuf>, 
-    extra_unspliced: Option<PathBuf>) -> anyhow::Result<()> 
-{
+    gtf_path: PathBuf,
+    out_dir: PathBuf,
+    augmented_sequences: Option<Vec<SequenceType>>,
+    no_transcript: bool,
+    read_length: i64,
+    flank_trim_length: i64,
+    no_flanking_merge: bool,
+    // filename_prefix: Option<String>,
+    _dedup_seqs: bool,
+    extra_spliced: Option<PathBuf>,
+    extra_unspliced: Option<PathBuf>,
+) -> anyhow::Result<()> {
     // if nothing to build, then exit
     if no_transcript & augmented_sequences.is_none() {
         anyhow::bail!("Nothing to build: --no-transcript is set and no augmented_sequences is provided. Cannot proceed");
@@ -211,7 +221,14 @@ fn make_ref(
     std::fs::create_dir_all(&out_dir)?;
     let out_fa = out_dir.join("roers_ref.fa");
     let out_gid2name = out_dir.join("gene_id_to_name.tsv");
-    let flank_length = read_length - flank_trim_length;
+    if flank_trim_length > read_length {
+        anyhow::bail!(
+            "The readi length: {} must be >= the flank trim length: {}",
+            read_length,
+            flank_trim_length
+        );
+    }
+    let flank_length = (read_length - flank_trim_length) as i32;
 
     // 1. we read the gtf file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
@@ -242,7 +259,7 @@ fn make_ref(
         df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
-            "The input GTF file do not have a gene_name field. We will use gene_id as gene_name."
+            "The input GTF file does not have a gene_name field. Roers will use gene_id as gene_name."
         );
         // we get gene id and rename it to gene_name
         let mut gene_name = df.column(fc.gene_id().unwrap())?.clone();
@@ -302,7 +319,6 @@ fn make_ref(
 
     if no_transcript {
         std::fs::File::create(&out_fa)?;
-
     } else {
         // Next, we write the transcript seuqences
         exon_gr.write_transcript_sequences(&genome_path, &out_fa, None, true, false)?;
@@ -315,11 +331,11 @@ fn make_ref(
                 SequenceType::Intronic => {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.introns(None, None, None, true)?;
-                
+
                     if !no_flanking_merge {
                         intron_gr.extend(flank_length, &options::ExtendOption::Both, false)?;
                     }
-                
+
                     // Then, we merge the overlapping introns
                     intron_gr = intron_gr.merge(
                         &[intron_gr.get_column_name("gene_id", false)?],
@@ -327,14 +343,17 @@ fn make_ref(
                         None,
                         None,
                     )?;
-                
+
                     intron_gr.add_order(Some(&["gene_id"]), "intron_number", Some(1), true)?;
                     intron_gr.df = intron_gr
                         .df
                         .lazy()
-                        .with_column(concat_str([col("gene_id"), col("intron_number")], "-I").alias("intron_id"))
+                        .with_column(
+                            concat_str([col("gene_id"), col("intron_number")], "-I")
+                                .alias("intron_id"),
+                        )
                         .collect()?;
-                
+
                     intron_gr.write_sequences(
                         &genome_path,
                         &out_fa,
@@ -343,7 +362,7 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
-                },
+                }
                 SequenceType::GeneBody => {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.genes(None, true)?;
@@ -355,7 +374,7 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
-                },
+                }
                 SequenceType::TranscriptBody => {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.transcripts(None, true)?;
@@ -367,7 +386,7 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
-                },
+                }
                 _ => {
                     anyhow::bail!("Invalid sequence type");
                 }
@@ -389,24 +408,21 @@ fn make_ref(
 
         let mut writer = noodles::fasta::Writer::new(
             std::fs::OpenOptions::new()
-            .append(true)
-            .open(&out_fa)
-            .with_context(|| {
-                format!("Could not open the output file {:?}", out_fa.as_os_str())
-            })?
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
         );
-
 
         for result in reader.records() {
             let record = result?;
-            writer
-                .write_record(&record)
-                .with_context(|| {
-                    format!(
-                        "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
-                    )
-                })?;
+            writer.write_record(&record).with_context(|| {
+                format!(
+                    "Could not write the sequence of extra spliced sequence {} to the output file",
+                    record.name()
+                )
+            })?;
         }
     };
 
@@ -418,24 +434,21 @@ fn make_ref(
 
         let mut writer = noodles::fasta::Writer::new(
             std::fs::OpenOptions::new()
-            .append(true)
-            .open(&out_fa)
-            .with_context(|| {
-                format!("Could not open the output file {:?}", out_fa.as_os_str())
-            })?
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
         );
-
 
         for result in reader.records() {
             let record = result?;
-            writer
-                .write_record(&record)
-                .with_context(|| {
-                    format!(
-                        "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
-                    )
-                })?;
+            writer.write_record(&record).with_context(|| {
+                format!(
+                    "Could not write the sequence of extra spliced sequence {} to the output file",
+                    record.name()
+                )
+            })?;
         }
     };
 

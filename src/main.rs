@@ -1,4 +1,5 @@
 use anyhow::Context;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::grangers::{options, Grangers};
 use noodles;
 use peak_alloc::PeakAlloc;
@@ -61,7 +62,7 @@ pub enum Commands {
             display_order = 1,
             value_delimiter = ',',
             requires = "genome",
-            value_parser = clap::builder::PossibleValuesParser::new(["i", "g", "t", "intronic", "gene-body", "transcript-body"]),
+            value_parser = PossibleValuesParser::new(&["i", "g", "t", "intronic", "gene-body", "transcript-body"]).map(|s| SequenceType::from(s.as_str())),
             hide_possible_values = true,
         )]
         augmented_sequences: Option<Vec<SequenceType>>,
@@ -123,7 +124,7 @@ pub enum Commands {
 
         /// Denotes that the input annotation is a GFF3 (instead of GTF) file
         #[arg(long = "gff3", display_order = 4)]
-        gff3: bool
+        gff3: bool,
     },
 }
 
@@ -204,7 +205,7 @@ fn make_ref(
     _dedup_seqs: bool,
     extra_spliced: Option<PathBuf>,
     extra_unspliced: Option<PathBuf>,
-    gff3: bool
+    gff3: bool,
 ) -> anyhow::Result<()> {
     // if nothing to build, then exit
     if no_transcript & augmented_sequences.is_none() {
@@ -230,7 +231,7 @@ fn make_ref(
     let out_gid2name = out_dir.join("gene_id_to_name.tsv");
     if flank_trim_length > read_length {
         anyhow::bail!(
-            "The readi length: {} must be >= the flank trim length: {}",
+            "The read length: {} must be >= the flank trim length: {}",
             read_length,
             flank_trim_length
         );
@@ -263,7 +264,10 @@ fn make_ref(
             file_type
         );
     } else if fc.gene_id().is_none() {
-        warn!("The input {} file do not have a gene_id field. We will use gene_name as gene_id", file_type);
+        warn!(
+            "The input {} file do not have a gene_id field. We will use gene_name as gene_id",
+            file_type
+        );
         // we get gene name and rename it to gene_id
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");

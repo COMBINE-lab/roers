@@ -1,22 +1,39 @@
+use clap::Parser;
+use grangers::grangers::{options, Grangers};
+use peak_alloc::PeakAlloc;
 use polars::lazy::dsl::concat_str;
+use polars::prelude::*;
 use std::env;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::info;
-use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
-use grangers::grangers::{options, Grangers};
-use peak_alloc::PeakAlloc;
-use polars::prelude::*;
 use tracing::warn;
+use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 
 #[global_allocator]
 static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct RoersCli {
+    /// input GTF (GFF3) file
+    #[arg(short, long, required = true)]
+    gtf_file: String,
+
+    /// input fasta file
+    #[arg(short, long, required = true)]
+    fasta_file: String,
+
+    /// output directory
+    #[arg(short, long, required = true)]
+    out_dir: String,
+}
+
 fn main() -> anyhow::Result<()> {
-    // // Check the `RUST_LOG` variable for the logger level and
-    // // respect the value found there. If this environment
-    // // variable is not set then set the logging level to
-    // // INFO.
+    // Check the `RUST_LOG` variable for the logger level and
+    // respect the value found there. If this environment
+    // variable is not set then set the logging level to
+    // INFO.
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(
@@ -26,10 +43,10 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let args: Vec<String> = env::args().collect();
-    let gtf_file = PathBuf::from(args.get(1).unwrap());
-    let fasta_file = PathBuf::from(args.get(2).unwrap());
-    let out_dir = PathBuf::from(args.get(3).unwrap());
+    let cli = RoersCli::parse();
+    let gtf_file = PathBuf::from(cli.gtf_file);
+    let fasta_file = PathBuf::from(cli.fasta_file);
+    let out_dir = PathBuf::from(cli.out_dir);
 
     // create the folder if it doesn't exist
     std::fs::create_dir_all(&out_dir)?;

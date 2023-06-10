@@ -204,7 +204,7 @@ fn make_ref(
     _dedup_seqs: bool,
     extra_spliced: Option<PathBuf>,
     extra_unspliced: Option<PathBuf>,
-    _gff3: bool
+    gff3: bool
 ) -> anyhow::Result<()> {
     // if nothing to build, then exit
     if no_transcript & augmented_sequences.is_none() {
@@ -239,7 +239,12 @@ fn make_ref(
 
     // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
-    let gr = Grangers::from_gtf(gtf_path.as_path(), true)?;
+    let gr = if gff3 {
+        Grangers::from_gff(gtf_path.as_path(), true)?
+    } else {
+        Grangers::from_gtf(gtf_path.as_path(), true)?
+    };
+
     let duration: Duration = start.elapsed();
     debug!("Built Grangers in {:?}", duration);
     info!("Built Grangers object for {:?} records", gr.df().height());

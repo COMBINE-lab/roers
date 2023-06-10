@@ -1,4 +1,8 @@
+use clap::Parser;
+use grangers::grangers::{options, Grangers};
+use peak_alloc::PeakAlloc;
 use polars::lazy::dsl::concat_str;
+use polars::prelude::*;
 use std::env;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -149,10 +153,10 @@ pub struct Cli {
 }
 
 fn main() -> anyhow::Result<()> {
-    // // Check the `RUST_LOG` variable for the logger level and
-    // // respect the value found there. If this environment
-    // // variable is not set then set the logging level to
-    // // INFO.
+    // Check the `RUST_LOG` variable for the logger level and
+    // respect the value found there. If this environment
+    // variable is not set then set the logging level to
+    // INFO.
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(

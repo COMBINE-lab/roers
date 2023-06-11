@@ -13,7 +13,7 @@ use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
 #[global_allocator]
 static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
-use clap::{builder::ArgPredicate, command, ArgGroup, Args, Parser, Subcommand};
+use clap::{command, Parser, Subcommand};
 
 /// The type of sequences we might include in the output reference FASTA file
 /// to map against for quantification with
@@ -103,7 +103,7 @@ pub enum Commands {
 
         /// The file name prefix of the generated output files.
         #[arg(long, default_value = "augmented_ref", display_order = 2)]
-        filename_prefix: Option<String>,
+        filename_prefix: String,
 
         /// Indicates whether identical sequences will be deduplicated.
         #[arg(long = "dedup", display_order = 1)]
@@ -178,6 +178,7 @@ fn main() -> anyhow::Result<()> {
                 read_length,
                 flank_trim_length,
                 no_flanking_merge,
+                filename_prefix,
                 dedup_seqs,
                 extra_spliced,
                 extra_unspliced,
@@ -201,7 +202,7 @@ fn make_ref(
     read_length: i64,
     flank_trim_length: i64,
     no_flanking_merge: bool,
-    // filename_prefix: Option<String>,
+    filename_prefix: String,
     _dedup_seqs: bool,
     extra_spliced: Option<PathBuf>,
     extra_unspliced: Option<PathBuf>,
@@ -227,7 +228,6 @@ fn make_ref(
 
     // create the folder if it doesn't exist
     std::fs::create_dir_all(&out_dir)?;
-    let out_fa = out_dir.join("roers_ref.fa");
     let out_gid2name = out_dir.join("gene_id_to_name.tsv");
     let out_t2g_3col_name = out_dir.join("t2g_3col.tsv");
     let out_t2g_name = out_dir.join("t2g.tsv");
@@ -239,6 +239,8 @@ fn make_ref(
         );
     }
     let flank_length = (read_length - flank_trim_length) as i32;
+    let filename_prefix = format!("{}_fl{}.fa", filename_prefix, flank_length);
+    let out_fa = out_dir.join(filename_prefix);
 
     // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();

@@ -229,6 +229,8 @@ fn make_ref(
     std::fs::create_dir_all(&out_dir)?;
     let out_fa = out_dir.join("roers_ref.fa");
     let out_gid2name = out_dir.join("gene_id_to_name.tsv");
+    let out_t2g_3col_name = out_dir.join("t2g_3col.tsv");
+    let out_t2g_name = out_dir.join("t2g.tsv");
     if flank_trim_length > read_length {
         anyhow::bail!(
             "The read length: {} must be >= the flank trim length: {}",
@@ -343,6 +345,8 @@ fn make_ref(
     }
 
     // Next, we write the augmented sequences
+    let mut intron_gr_opt = None; //exon_gr.exons(None, false)?;
+    let mut intron_id_s = "".to_string();
     if let Some(augmented_sequences) = augmented_sequences {
         for seq_typ in augmented_sequences {
             match seq_typ {
@@ -380,6 +384,8 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
+                    intron_id_s = intron_gr.get_column_name("intron_id", false)?.to_string();
+                    intron_gr_opt = Some(intron_gr);
                 }
                 SequenceType::GeneBody => {
                     // Then, we get the introns
@@ -392,6 +398,8 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
+                    intron_id_s = intron_gr.get_column_name("gene_id", false)?.to_string();
+                    intron_gr_opt = Some(intron_gr);
                 }
                 SequenceType::TranscriptBody => {
                     // Then, we get the introns
@@ -404,19 +412,65 @@ fn make_ref(
                         options::OOBOption::Truncate,
                         true,
                     )?;
+                    intron_id_s = intron_gr
+                        .get_column_name("transcript_id", false)?
+                        .to_string();
+                    intron_gr_opt = Some(intron_gr);
                 }
                 _ => {
+                    // todo, this is to avoid initalization error
+                    // we probably want to set this as an empty grangers
+                    // object here.
                     anyhow::bail!("Invalid sequence type");
                 }
             }
         }
     }
+    let intron_id = intron_id_s.as_str();
 
     let mut file = std::fs::File::create(out_gid2name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')
         .finish(&mut gene_id_to_name)?;
+
+    let mut tid_frame = Vec::with_capacity(2);
+    tid_frame.push(
+        exon_gr
+            .df()
+            .select([transcript_id, gene_id])?
+            .unique(None, UniqueKeepStrategy::Any, None)?
+            .lazy()
+            .with_column(lit("S").alias("splice_status")),
+    );
+
+    if let Some(intron_gr) = intron_gr_opt {
+        tid_frame.push(
+            intron_gr
+                .df()
+                .select([intron_id, gene_id])?
+                .rename("intron_id", "transcript_id")?
+                .unique(None, UniqueKeepStrategy::Any, None)?
+                .lazy()
+                .with_column(lit("I").alias("splice_status")),
+        );
+    }
+    // Next, we get the gene_name to id mapping
+    let mut transcript_id_to_gene_id = polars::prelude::concat(&tid_frame, false, false)
+        .unwrap()
+        .collect()?;
+
+    let mut file = std::fs::File::create(out_t2g_3col_name)?;
+    CsvWriter::new(&mut file)
+        .has_header(false)
+        .with_delimiter(b'\t')
+        .finish(&mut transcript_id_to_gene_id)?;
+
+    let mut file = std::fs::File::create(out_t2g_name)?;
+    CsvWriter::new(&mut file)
+        .has_header(false)
+        .with_delimiter(b'\t')
+        .finish(&mut transcript_id_to_gene_id.drop("splice_status")?)?;
 
     if let Some(path) = extra_spliced {
         // create extra file reader

@@ -355,7 +355,7 @@ fn make_ref(
                     let mut intron_gr = exon_gr.introns(None, None, None, true)?;
 
                     if !no_flanking_merge {
-                        intron_gr.extend(flank_length, &options::ExtendOption::Both, false)?;
+                        intron_gr.extend(flank_length as i64, &options::ExtendOption::Both, false)?;
                     }
 
                     // Then, we merge the overlapping introns

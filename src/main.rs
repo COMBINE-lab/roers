@@ -5,6 +5,8 @@ use noodles;
 use peak_alloc::PeakAlloc;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
+use serde_json::json;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -19,7 +21,7 @@ use clap::{command, Parser, Subcommand};
 /// to map against for quantification with
 /// alevin-fry.
 #[derive(Clone, Debug)]
-pub enum SequenceType {
+pub enum AugType {
     /// The sequence of Spliced transcripts
     Transcript,
     /// The sequence of introns of transcripts, merged by gene
@@ -30,7 +32,7 @@ pub enum SequenceType {
     TranscriptBody,
 }
 
-impl From<&str> for SequenceType {
+impl From<&str> for AugType {
     fn from(s: &str) -> Self {
         match s {
             // "transcript" | "t" => Self::Transcript,
@@ -38,6 +40,17 @@ impl From<&str> for SequenceType {
             "gene-body" | "g" => Self::GeneBody,
             "transcript-body" | "t" => Self::TranscriptBody,
             _ => panic!("Invalid sequence type"),
+        }
+    }
+}
+
+impl AsRef<str> for AugType {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Transcript => "transcript",
+            Self::Intronic => "intronic",
+            Self::GeneBody => "gene-body",
+            Self::TranscriptBody => "transcript-body",
         }
     }
 }
@@ -62,10 +75,10 @@ pub enum Commands {
             display_order = 1,
             value_delimiter = ',',
             requires = "genome",
-            value_parser = PossibleValuesParser::new(&["i", "g", "t", "intronic", "gene-body", "transcript-body"]).map(|s| SequenceType::from(s.as_str())),
+            value_parser = PossibleValuesParser::new(&["i", "g", "t", "intronic", "gene-body", "transcript-body"]).map(|s| AugType::from(s.as_str())),
             hide_possible_values = true,
         )]
-        augmented_sequences: Option<Vec<SequenceType>>,
+        aug_type: Option<Vec<AugType>>,
 
         /// A flag of not including spliced transcripts in the output FASTA file. (usually there should be a good reason to do so)
         #[arg(long, display_order = 3)]
@@ -78,7 +91,7 @@ pub enum Commands {
             help_heading = "Intronic Sequence Options",
             display_order = 1,
             default_value_t = 91,
-            requires_if("intronic", "augmented_sequences")
+            requires_if("intronic", "aug_type")
         )]
         read_length: i64,
 
@@ -88,7 +101,7 @@ pub enum Commands {
             help_heading = "Intronic Sequence Options",
             display_order = 2,
             default_value_t = 5,
-            requires_if("intronic", "augmented_sequences")
+            requires_if("intronic", "aug_type")
         )]
         flank_trim_length: i64,
 
@@ -97,12 +110,12 @@ pub enum Commands {
             long,
             help_heading = "Intronic Sequence Options",
             display_order = 3,
-            requires_if("intronic", "augmented_sequences")
+            requires_if("intronic", "aug_type")
         )]
         no_flanking_merge: bool,
 
         /// The file name prefix of the generated output files.
-        #[arg(long, default_value = "augmented_ref", display_order = 2)]
+        #[arg(short = 'p', long, default_value = "roers_ref", display_order = 2)]
         filename_prefix: String,
 
         /// Indicates whether identical sequences will be deduplicated.
@@ -110,14 +123,14 @@ pub enum Commands {
         dedup_seqs: bool,
 
         /// The path to an extra spliced sequence fasta file.
-        #[arg(long, help_heading = "Extra Spliced Sequence Files", display_order = 3)]
+        #[arg(long, help_heading = "Extra Spliced Sequence File", display_order = 3)]
         extra_spliced: Option<PathBuf>,
 
         /// The path to an extra unspliced sequence fasta file.
         #[arg(
             // short,
             long,
-            help_heading = "Extra Unspliced Sequence Files",
+            help_heading = "Extra Unspliced Sequence File",
             display_order = 3,
         )]
         extra_unspliced: Option<PathBuf>,
@@ -128,7 +141,6 @@ pub enum Commands {
     },
 }
 
-/// simplifying alevin-fry workflows
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 #[command(propagate_version = true)]
@@ -158,7 +170,7 @@ fn main() -> anyhow::Result<()> {
             genome,
             genes,
             out_dir,
-            augmented_sequences,
+            aug_type,
             no_transcript,
             read_length,
             flank_trim_length,
@@ -173,7 +185,7 @@ fn main() -> anyhow::Result<()> {
                 genome,
                 genes,
                 out_dir,
-                augmented_sequences,
+                aug_type,
                 no_transcript,
                 read_length,
                 flank_trim_length,
@@ -197,23 +209,23 @@ fn make_ref(
     genome_path: PathBuf,
     gtf_path: PathBuf,
     out_dir: PathBuf,
-    augmented_sequences: Option<Vec<SequenceType>>,
+    aug_type: Option<Vec<AugType>>,
     no_transcript: bool,
     read_length: i64,
     flank_trim_length: i64,
     no_flanking_merge: bool,
     filename_prefix: String,
-    _dedup_seqs: bool,
+    dedup_seqs: bool,
     extra_spliced: Option<PathBuf>,
     extra_unspliced: Option<PathBuf>,
     gff3: bool,
 ) -> anyhow::Result<()> {
     // if nothing to build, then exit
-    if no_transcript & augmented_sequences.is_none() {
-        anyhow::bail!("Nothing to build: --no-transcript is set and no augmented_sequences is provided. Cannot proceed");
+    if no_transcript & aug_type.is_none() {
+        anyhow::bail!("Nothing to build: --no-transcript is set and --aug-type is not provided. Cannot proceed");
     }
 
-    // check if extra_spliced and unspliced valid
+    // check if extra_spliced and extra_unspliced is valid
     if let Some(extra_spliced) = &extra_spliced {
         if !extra_spliced.exists() {
             anyhow::bail!("The extra spliced sequence file does not exist. Cannot proceed");
@@ -228,9 +240,14 @@ fn make_ref(
 
     // create the folder if it doesn't exist
     std::fs::create_dir_all(&out_dir)?;
+    // specify output file names
     let out_gid2name = out_dir.join("gene_id_to_name.tsv");
-    let out_t2g_3col_name = out_dir.join("t2g_3col.tsv");
-    let out_t2g_name = out_dir.join("t2g.tsv");
+    let out_t2g_name = out_dir.join(if aug_type.is_some() {
+        "t2g_3col.tsv"
+    } else {
+        "t2g.tsv"
+    });
+
     if flank_trim_length > read_length {
         anyhow::bail!(
             "The read length: {} must be >= the flank trim length: {}",
@@ -238,9 +255,11 @@ fn make_ref(
             flank_trim_length
         );
     }
-    let flank_length = (read_length - flank_trim_length) as i32;
-    let filename_prefix = format!("{}_fl{}.fa", filename_prefix, flank_length);
-    let out_fa = out_dir.join(filename_prefix);
+    let flank_length = (read_length - flank_trim_length) as i64;
+    // let filename_prefix = format!("{}_fl{}.fa", filename_prefix, flank_length);
+    let filename_prefix = format!("{}.fa", filename_prefix);
+    let out_fa = out_dir.join(&filename_prefix);
+    std::fs::File::create(&out_fa)?;
 
     // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
@@ -251,8 +270,11 @@ fn make_ref(
     };
 
     let duration: Duration = start.elapsed();
-    debug!("Built Grangers in {:?}", duration);
-    info!("Built Grangers object for {:?} records", gr.df().height());
+    debug!("Built the Grangers object in {:?}", duration);
+    info!(
+        "Built the Grangers object for {:?} records",
+        gr.df().height()
+    );
 
     // we get the exon df and validate it
     // this will make sure that each exon has a valid transcript ID, and the exon numbers are valid
@@ -264,12 +286,12 @@ fn make_ref(
     // we then make sure that the gene_id and gene_name fields are not both missing
     if fc.gene_id().is_none() && fc.gene_name().is_none() {
         anyhow::bail!(
-            "The input {} file must have either gene_id or gene_name field. Cannot proceed",
+            "The input {} file does not have a valid gene_id or gene_name field. Cannot proceed",
             file_type
         );
     } else if fc.gene_id().is_none() {
         warn!(
-            "The input {} file do not have a gene_id field. We will use gene_name as gene_id",
+            "The input {} file does not have a valid gene_id field. Roers will use gene_name as gene_id",
             file_type
         );
         // we get gene name and rename it to gene_id
@@ -280,7 +302,7 @@ fn make_ref(
         df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
-            "The input {} file does not have a gene_name field. Roers will use gene_id as gene_name.",
+            "The input {} file does not have a valid gene_name field. Roers will use gene_id as gene_name.",
             file_type
         );
         // we get gene id and rename it to gene_name
@@ -326,98 +348,190 @@ fn make_ref(
             .collect()?;
     }
 
-    // Next, we get the gene_name to id mapping
-    let mut gene_id_to_name =
-        exon_gr
-            .df()
-            .select([gene_id, gene_name])?
-            .unique(None, UniqueKeepStrategy::Any, None)?;
-
+    // to this point, we have a valid exon df to work with.
     info!(
         "Proceed {} exon records from {} transcripts",
         exon_gr.df().height(),
         exon_gr.df().column("transcript_id")?.n_unique()?
     );
 
-    if no_transcript {
-        std::fs::File::create(&out_fa)?;
-    } else {
-        // Next, we write the transcript seuqences
-        exon_gr.write_transcript_sequences(&genome_path, &out_fa, None, true, false)?;
+    // Next, we get the gene id to name mapping
+    let mut gene_id_to_name =
+        exon_gr
+            .df()
+            .select([gene_id, gene_name])?
+            .unique(None, UniqueKeepStrategy::Any, None)?;
+
+    // also, the t2g mapping for spliced transcripts
+    let mut t2g_map = exon_gr.df().select([transcript_id, gene_id])?.unique(
+        None,
+        UniqueKeepStrategy::Any,
+        None,
+    )?;
+
+    // if we have augmented sequences, we need three columns
+    if aug_type.is_some() {
+        t2g_map.with_column(Series::new("splice_status", vec!["S"; t2g_map.height()]))?;
+    }
+
+    // Next, we write the transcript sequences to file if asked, otherwise create a file
+    // we need to know if we want to deduplicate sequences
+    let mut spliced_recs: Vec<noodles::fasta::Record> = Vec::new();
+    if !no_transcript {
+        if dedup_seqs {
+            spliced_recs.extend(
+                exon_gr
+                    .get_transcript_sequences(&genome_path, None, true)?
+                    .into_iter(),
+            );
+        } else {
+            // Next, we write the transcript seuqences
+            exon_gr.write_transcript_sequences(&genome_path, &out_fa, None, true, true)?;
+        }
     }
 
     // Next, we write the augmented sequences
-    let mut intron_gr_opt = None; //exon_gr.exons(None, false)?;
-    let mut intron_id_s = "".to_string();
-    if let Some(augmented_sequences) = augmented_sequences {
-        for seq_typ in augmented_sequences {
+    let mut unspliced_recs: Vec<Option<noodles::fasta::Record>> = Vec::new();
+    if let Some(aug_type) = &aug_type {
+        for seq_typ in aug_type {
             match seq_typ {
-                SequenceType::Intronic => {
+                AugType::Intronic => {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.introns(None, None, None, true)?;
 
                     if !no_flanking_merge {
-                        intron_gr.extend(flank_length as i64, &options::ExtendOption::Both, false)?;
+                        intron_gr.extend(
+                            flank_length as i64,
+                            &options::ExtendOption::Both,
+                            false,
+                        )?;
                     }
 
                     // Then, we merge the overlapping introns
                     intron_gr = intron_gr.merge(
-                        &[intron_gr.get_column_name("gene_id", false)?],
+                        &[intron_gr.get_column_name(gene_id, false)?],
                         false,
                         None,
                         None,
                     )?;
 
-                    intron_gr.add_order(Some(&["gene_id"]), "intron_number", Some(1), true)?;
+                    intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), true)?;
                     intron_gr.df = intron_gr
                         .df
                         .lazy()
                         .with_column(
-                            concat_str([col("gene_id"), col("intron_number")], "-I")
+                            concat_str([col(gene_id), col("intron_number")], "-I")
                                 .alias("intron_id"),
                         )
                         .collect()?;
 
-                    intron_gr.write_sequences(
-                        &genome_path,
-                        &out_fa,
-                        false,
-                        Some("intron_id"),
-                        options::OOBOption::Truncate,
-                        true,
+                    if dedup_seqs {
+                        unspliced_recs.extend(
+                            intron_gr
+                                .get_sequences(
+                                    &genome_path,
+                                    false,
+                                    Some("intron_id"),
+                                    options::OOBOption::Truncate,
+                                )?
+                                .into_iter(),
+                        );
+                    } else {
+                        intron_gr.write_sequences(
+                            &genome_path,
+                            &out_fa,
+                            false,
+                            Some("intron_id"),
+                            options::OOBOption::Truncate,
+                            true,
+                        )?;
+                    }
+
+                    // we need to update the t2g mapping for introns
+                    let mut intron_t2g = intron_gr.df().select(["intron_id", gene_id])?.unique(
+                        None,
+                        UniqueKeepStrategy::Any,
+                        None,
                     )?;
-                    intron_id_s = intron_gr.get_column_name("intron_id", false)?.to_string();
-                    intron_gr_opt = Some(intron_gr);
+                    intron_t2g.with_column(Series::new(
+                        "splice_status",
+                        vec!["U"; intron_t2g.height()],
+                    ))?;
+
+                    t2g_map.extend(&intron_t2g)?;
                 }
-                SequenceType::GeneBody => {
+                AugType::GeneBody => {
                     // Then, we get the introns
-                    let mut intron_gr = exon_gr.genes(None, true)?;
-                    intron_gr.write_sequences(
-                        &genome_path,
-                        &out_fa,
-                        false,
-                        Some("gene_id"),
-                        options::OOBOption::Truncate,
-                        true,
+                    let mut gene_gr = exon_gr.genes(None, true)?;
+
+                    if dedup_seqs {
+                        unspliced_recs.extend(
+                            gene_gr
+                                .get_sequences(
+                                    &genome_path,
+                                    false,
+                                    Some(gene_id),
+                                    options::OOBOption::Truncate,
+                                )?
+                                .into_iter(),
+                        );
+                    } else {
+                        gene_gr.write_sequences(
+                            &genome_path,
+                            &out_fa,
+                            false,
+                            Some(gene_id),
+                            options::OOBOption::Truncate,
+                            true,
+                        )?;
+                    }
+
+                    // we need to update the t2g mapping for genes
+                    let mut gene_t2g = gene_gr.df().select([gene_id, gene_id])?.unique(
+                        None,
+                        UniqueKeepStrategy::Any,
+                        None,
                     )?;
-                    intron_id_s = intron_gr.get_column_name("gene_id", false)?.to_string();
-                    intron_gr_opt = Some(intron_gr);
+                    gene_t2g
+                        .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
+
+                    t2g_map.extend(&gene_t2g)?;
                 }
-                SequenceType::TranscriptBody => {
+                AugType::TranscriptBody => {
                     // Then, we get the introns
-                    let mut intron_gr = exon_gr.transcripts(None, true)?;
-                    intron_gr.write_sequences(
-                        &genome_path,
-                        &out_fa,
-                        false,
-                        Some("transcript_id"),
-                        options::OOBOption::Truncate,
-                        true,
+                    let mut tx_gr = exon_gr.transcripts(None, true)?;
+
+                    if dedup_seqs {
+                        unspliced_recs.extend(
+                            tx_gr
+                                .get_sequences(
+                                    &genome_path,
+                                    false,
+                                    Some(gene_id),
+                                    options::OOBOption::Truncate,
+                                )?
+                                .into_iter(),
+                        );
+                    } else {
+                        tx_gr.write_sequences(
+                            &genome_path,
+                            &out_fa,
+                            false,
+                            Some(gene_id),
+                            options::OOBOption::Truncate,
+                            true,
+                        )?;
+                    }
+
+                    // we need to update the t2g mapping for introns
+                    let mut tx_t2g = tx_gr.df().select([transcript_id, gene_id])?.unique(
+                        None,
+                        UniqueKeepStrategy::Any,
+                        None,
                     )?;
-                    intron_id_s = intron_gr
-                        .get_column_name("transcript_id", false)?
-                        .to_string();
-                    intron_gr_opt = Some(intron_gr);
+                    tx_t2g.with_column(Series::new("splice_status", vec!["U"; tx_t2g.height()]))?;
+
+                    t2g_map.extend(&tx_t2g)?;
                 }
                 _ => {
                     // todo, this is to avoid initalization error
@@ -428,126 +542,209 @@ fn make_ref(
             }
         }
     }
-    let intron_id = intron_id_s.as_str();
 
-    let mut file = std::fs::File::create(out_gid2name)?;
+    // if there are extra spliced sequences, we include them in
+    if let Some(path) = &extra_spliced {
+        // create extra file reader
+        let mut reader = std::fs::File::open(path)
+            .map(std::io::BufReader::new)
+            .map(noodles::fasta::Reader::new)?;
+
+        // we crate the writer, and write if not dedup
+        let mut writer = noodles::fasta::Writer::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
+        );
+
+        // if dedup, we push the records into the seq vector
+        // otherwise, we write the records to the output file
+        let mut names = Vec::new();
+        for result in reader.records() {
+            let record = result?;
+            names.push(record.name().to_owned().clone());
+
+            if dedup_seqs {
+                spliced_recs.push(record);
+            } else {
+                writer.write_record(&record).with_context(|| {
+                    format!(
+                        "Could not write the sequence of extra spliced sequence {} to the output file",
+                        record.name()
+                    )
+                })?;
+            }
+        }
+
+        // extend t2g_map for the custom spliced targets
+        t2g_map.extend(&df!(
+            "transcript_id" => &names,
+            "gene_id" => &names,
+            "splice_status" => &vec!["S"; names.len()]
+        )?)?;
+
+        // extend gene_id_to_name for the custom spliced targets
+        gene_id_to_name.extend(&df!("gene_id" => &names, "gene_name" => &names)?)?;
+    };
+
+    if let Some(path) = &extra_unspliced {
+        // create extra file reader
+        let mut reader = std::fs::File::open(path)
+            .map(std::io::BufReader::new)
+            .map(noodles::fasta::Reader::new)?;
+
+        let mut writer = noodles::fasta::Writer::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
+        );
+
+        let mut names = Vec::new();
+        for result in reader.records() {
+            let record = result?;
+            names.push(record.name().to_owned().clone());
+
+            if dedup_seqs {
+                unspliced_recs.push(Some(record));
+            } else {
+                writer.write_record(&record).with_context(|| {
+                    format!(
+                        "Could not write the sequence of extra spliced sequence {} to the output file",
+                        record.name()
+                    )
+                })?;
+            }
+        }
+
+        // extend a dataframe for the custom unspliced targets
+        t2g_map.extend(&df!(
+            "transcript_id" => &names,
+            "gene_id" => &names,
+            "splice_status" => &vec!["U"; names.len()]
+        )?)?;
+
+        // extend gene_id_to_name for the custom unspliced targets
+        gene_id_to_name.extend(&df!("gene_id" => &names, "gene_name" => &names)?)?;
+    };
+
+    // at this point, if we don't do deduplication, the fasta file should be ready
+    // if we do, we need to check if each seq is the unique one before write to the file
+    if dedup_seqs {
+        let mut writer = noodles::fasta::Writer::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
+        );
+
+        // we need a hashset to record if we have seen a sequence
+        let mut seq_hs = HashSet::new();
+        // we process spliced records first
+        if !spliced_recs.is_empty() {
+            // for each record, if the sequence is not in the hashset, we write it to the file
+            for r in spliced_recs.iter() {
+                if seq_hs.insert(
+                    r.sequence()
+                        .get(..)
+                        .with_context(|| {
+                            format!("Failed getting sequence for record {}", r.name())
+                        })?
+                        .to_owned(),
+                ) {
+                    writer.write_record(r).with_context(|| {
+                        format!(
+                            "Could not write the sequence of spliced transcript {} to the output file",
+                            r.name()
+                        )
+                    })?;
+                }
+            }
+        }
+
+        // we process unspliced records first
+        if !unspliced_recs.is_empty() {
+            // for each record, if the sequence is not in the hashset, we write it to the file
+            for r in unspliced_recs.iter() {
+                // as we might get empty sequence (oob)
+                // we need to check if the record is empty
+                if let Some(r) = r {
+                    if seq_hs.insert(
+                        r.sequence()
+                            .get(..)
+                            .with_context(|| {
+                                format!("Failed getting sequence for record {}", r.name())
+                            })?
+                            .to_owned(),
+                    ) {
+                        writer.write_record(r).with_context(|| {
+                            format!(
+                                "Could not write the sequence of spliced transcript {} to the output file",
+                                r.name()
+                            )
+                        })?;
+                    }
+                }
+            }
+        }
+    } // if dedup_seq
+
+    // Till this point, we are done with the fasta file
+    // we need to write the t2g and gene_id_to_name files
+
+    let mut file = std::fs::File::create(&out_t2g_name)?;
+    CsvWriter::new(&mut file)
+        .has_header(false)
+        .with_delimiter(b'\t')
+        .finish(&mut t2g_map)?;
+
+    let mut file = std::fs::File::create(&out_gid2name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')
         .finish(&mut gene_id_to_name)?;
 
-    let mut tid_frame = Vec::with_capacity(4);
+    let info_file = out_dir.join("roers_makeref.json");
 
-    if let Some(path) = extra_spliced {
-        // create extra file reader
-        let mut reader = std::fs::File::open(path)
-            .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
+    let v = clap::crate_version!();
 
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
-
-        let mut names = Vec::new();
-        for result in reader.records() {
-            let record = result?;
-            names.push(record.name().to_owned().clone());
-            writer.write_record(&record).with_context(|| {
-                format!(
-                    "Could not write the sequence of extra spliced sequence {} to the output file",
-                    record.name()
-                )
-            })?;
+    let index_info = json!({
+        "command" : "roers makeref",
+        "roers_version" : v,
+        "output_fasta": out_fa,
+        "args" : {
+            "genome" : genome_path,
+            "genes" : gtf_path,
+            "out_dir" : out_dir,
+            "aug_type" : if let Some(at) = &aug_type {
+                at.iter().map(|x| x.as_ref()).collect::<Vec<&str>>()
+            } else {
+                vec![]
+            },
+            "no_transcript" : no_transcript,
+            "read_length" : read_length,
+            "flank_trim_length" : flank_trim_length,
+            "no_flanking_merge" : no_flanking_merge,
+            "filename_prefix" : filename_prefix,
+            "dedup_seqs" : dedup_seqs,
+            "extra_spliced" : extra_spliced,
+            "extra_unspliced" : extra_unspliced,
+            "gff3" : gff3,
         }
+    });
 
-        // push a dataframe for the custom spliced targets
-        tid_frame.push(
-            DataFrame::new(vec![Series::new("transcript_id", names)])
-            .unwrap()
-            .lazy()
-            .with_column(lit("S").alias("splice_status"))
-        );
-    };
-
-    if let Some(path) = extra_unspliced {
-        // create extra file reader
-        let mut reader = std::fs::File::open(path)
-            .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
-
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
-
-        let mut names = Vec::new();
-        for result in reader.records() {
-            let record = result?;
-            names.push(record.name().to_owned().clone());
-            writer.write_record(&record).with_context(|| {
-                format!(
-                    "Could not write the sequence of extra spliced sequence {} to the output file",
-                    record.name()
-                )
-            })?;
-        }
-
-        // push a dataframe for the custom unspliced targets
-        tid_frame.push(
-            DataFrame::new(vec![Series::new("transcript_id", names)])
-            .unwrap()
-            .lazy()
-            .with_column(lit("I").alias("splice_status"))
-        );
-    };
-
-    // the original exon frame
-    tid_frame.push(
-        exon_gr
-            .df()
-            .select([transcript_id, gene_id])?
-            .unique(None, UniqueKeepStrategy::Any, None)?
-            .lazy()
-            .with_column(lit("S").alias("splice_status")),
-    );
-
-    // the original intronic/unspliced frame (if we have it)
-    if let Some(intron_gr) = intron_gr_opt {
-        tid_frame.push(
-            intron_gr
-                .df()
-                .select([intron_id, gene_id])?
-                .rename("intron_id", "transcript_id")?
-                .unique(None, UniqueKeepStrategy::Any, None)?
-                .lazy()
-                .with_column(lit("I").alias("splice_status")),
-        );
-    }
-    // Next, we get the gene_name to id mapping
-    let mut transcript_id_to_gene_id = polars::prelude::concat(&tid_frame, false, false)
-        .unwrap()
-        .collect()?;
-
-    let mut file = std::fs::File::create(out_t2g_3col_name)?;
-    CsvWriter::new(&mut file)
-        .has_header(false)
-        .with_delimiter(b'\t')
-        .finish(&mut transcript_id_to_gene_id)?;
-
-    let mut file = std::fs::File::create(out_t2g_name)?;
-    CsvWriter::new(&mut file)
-        .has_header(false)
-        .with_delimiter(b'\t')
-        .finish(&mut transcript_id_to_gene_id.drop("splice_status")?)?;
+    std::fs::write(
+        &info_file,
+        serde_json::to_string_pretty(&index_info).unwrap(),
+    )
+    .with_context(|| format!("could not write {}", info_file.display()))?;
 
     Ok(())
 }

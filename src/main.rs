@@ -453,6 +453,7 @@ fn make_ref(
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
+                    intron_t2g.rename("intron_id", transcript_id)?;
                     intron_t2g.with_column(Series::new(
                         "splice_status",
                         vec!["U"; intron_t2g.height()],
@@ -492,6 +493,8 @@ fn make_ref(
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
+                    gene_t2g.rename(gene_id, transcript_id)?;
+
                     gene_t2g
                         .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
 

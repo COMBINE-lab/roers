@@ -434,7 +434,81 @@ fn make_ref(
         .with_delimiter(b'\t')
         .finish(&mut gene_id_to_name)?;
 
-    let mut tid_frame = Vec::with_capacity(2);
+    let mut tid_frame = Vec::with_capacity(4);
+
+    if let Some(path) = extra_spliced {
+        // create extra file reader
+        let mut reader = std::fs::File::open(path)
+            .map(std::io::BufReader::new)
+            .map(noodles::fasta::Reader::new)?;
+
+        let mut writer = noodles::fasta::Writer::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
+        );
+
+        let mut names = Vec::new();
+        for result in reader.records() {
+            let record = result?;
+            names.push(record.name().to_owned().clone());
+            writer.write_record(&record).with_context(|| {
+                format!(
+                    "Could not write the sequence of extra spliced sequence {} to the output file",
+                    record.name()
+                )
+            })?;
+        }
+
+        // push a dataframe for the custom spliced targets
+        tid_frame.push(
+            DataFrame::new(vec![Series::new("transcript_id", names)])
+            .unwrap()
+            .lazy()
+            .with_column(lit("S").alias("splice_status"))
+        );
+    };
+
+    if let Some(path) = extra_unspliced {
+        // create extra file reader
+        let mut reader = std::fs::File::open(path)
+            .map(std::io::BufReader::new)
+            .map(noodles::fasta::Reader::new)?;
+
+        let mut writer = noodles::fasta::Writer::new(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&out_fa)
+                .with_context(|| {
+                    format!("Could not open the output file {:?}", out_fa.as_os_str())
+                })?,
+        );
+
+        let mut names = Vec::new();
+        for result in reader.records() {
+            let record = result?;
+            names.push(record.name().to_owned().clone());
+            writer.write_record(&record).with_context(|| {
+                format!(
+                    "Could not write the sequence of extra spliced sequence {} to the output file",
+                    record.name()
+                )
+            })?;
+        }
+
+        // push a dataframe for the custom unspliced targets
+        tid_frame.push(
+            DataFrame::new(vec![Series::new("transcript_id", names)])
+            .unwrap()
+            .lazy()
+            .with_column(lit("I").alias("splice_status"))
+        );
+    };
+
+    // the original exon frame
     tid_frame.push(
         exon_gr
             .df()
@@ -444,6 +518,7 @@ fn make_ref(
             .with_column(lit("S").alias("splice_status")),
     );
 
+    // the original intronic/unspliced frame (if we have it)
     if let Some(intron_gr) = intron_gr_opt {
         tid_frame.push(
             intron_gr
@@ -471,58 +546,6 @@ fn make_ref(
         .has_header(false)
         .with_delimiter(b'\t')
         .finish(&mut transcript_id_to_gene_id.drop("splice_status")?)?;
-
-    if let Some(path) = extra_spliced {
-        // create extra file reader
-        let mut reader = std::fs::File::open(path)
-            .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
-
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
-
-        for result in reader.records() {
-            let record = result?;
-            writer.write_record(&record).with_context(|| {
-                format!(
-                    "Could not write the sequence of extra spliced sequence {} to the output file",
-                    record.name()
-                )
-            })?;
-        }
-    };
-
-    if let Some(path) = extra_unspliced {
-        // create extra file reader
-        let mut reader = std::fs::File::open(path)
-            .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
-
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
-
-        for result in reader.records() {
-            let record = result?;
-            writer.write_record(&record).with_context(|| {
-                format!(
-                    "Could not write the sequence of extra spliced sequence {} to the output file",
-                    record.name()
-                )
-            })?;
-        }
-    };
 
     Ok(())
 }

@@ -169,38 +169,8 @@ fn main() -> anyhow::Result<()> {
     let cli_args = Cli::parse();
 
     match cli_args.command {
-        Commands::MakeRef(
-            AugRefOpts{
-            genome,
-            genes,
-            out_dir,
-            aug_type,
-            no_transcript,
-            read_length,
-            flank_trim_length,
-            no_flanking_merge,
-            filename_prefix,
-            dedup_seqs,
-            extra_spliced,
-            extra_unspliced,
-            gff3,
-            }
-        ) => {
-            make_ref(
-                genome,
-                genes,
-                out_dir,
-                aug_type,
-                no_transcript,
-                read_length,
-                flank_trim_length,
-                no_flanking_merge,
-                filename_prefix,
-                dedup_seqs,
-                extra_spliced,
-                extra_unspliced,
-                gff3,
-            )
+        Commands::MakeRef(aug_ref_opts) => {
+            make_ref(aug_ref_opts)
         }?,
     }
 
@@ -210,21 +180,22 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn make_ref(
-    genome_path: PathBuf,
-    gtf_path: PathBuf,
-    out_dir: PathBuf,
-    aug_type: Option<Vec<AugType>>,
-    no_transcript: bool,
-    read_length: i64,
-    flank_trim_length: i64,
-    no_flanking_merge: bool,
-    filename_prefix: String,
-    dedup_seqs: bool,
-    extra_spliced: Option<PathBuf>,
-    extra_unspliced: Option<PathBuf>,
-    gff3: bool,
-) -> anyhow::Result<()> {
+fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
+    // clean this up 
+    let genome_path: PathBuf = aug_ref_opts.genome;
+    let gtf_path: PathBuf = aug_ref_opts.genes;
+    let out_dir: PathBuf = aug_ref_opts.out_dir;
+    let aug_type: Option<Vec<AugType>> = aug_ref_opts.aug_type;
+    let no_transcript: bool = aug_ref_opts.no_transcript;
+    let read_length: i64 = aug_ref_opts.read_length;
+    let flank_trim_length: i64 = aug_ref_opts.flank_trim_length;
+    let no_flanking_merge: bool = aug_ref_opts.no_flanking_merge;
+    let filename_prefix: String = aug_ref_opts.filename_prefix;
+    let dedup_seqs: bool = aug_ref_opts.dedup_seqs;
+    let extra_spliced: Option<PathBuf> = aug_ref_opts.extra_spliced;
+    let extra_unspliced: Option<PathBuf> = aug_ref_opts.extra_unspliced;
+    let gff3: bool = aug_ref_opts.gff3;
+
     // if nothing to build, then exit
     if no_transcript & aug_type.is_none() {
         anyhow::bail!("Nothing to build: --no-transcript is set and --aug-type is not provided. Cannot proceed");

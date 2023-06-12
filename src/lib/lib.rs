@@ -1,15 +1,14 @@
 use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::grangers::{options, Grangers};
-use noodles;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde_json::json;
 use std::collections::HashSet;
+use std::ops::Add;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
-use std::ops::Add;
 
 //#[global_allocator]
 //static PEAK_ALLOC: PeakAlloc = PeakAlloc;
@@ -187,7 +186,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             flank_trim_length
         );
     }
-    let flank_length = (read_length - flank_trim_length) as i64;
+    let flank_length = read_length - flank_trim_length;
     // let filename_prefix = format!("{}_fl{}.fa", filename_prefix, flank_length);
     let filename_prefix = format!("{}.fa", filename_prefix);
     let out_fa = out_dir.join(&filename_prefix);
@@ -246,11 +245,11 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     }
 
     exon_gr.field_columns = fc;
-    let gene_id_s = exon_gr.get_column_name("gene_id", false)?.to_string();
+    let gene_id_s = exon_gr.get_column_name("gene_id", false)?;
     let gene_id = gene_id_s.as_str();
-    let gene_name_s = exon_gr.get_column_name("gene_name", false)?.to_string();
+    let gene_name_s = exon_gr.get_column_name("gene_name", false)?;
     let gene_name = gene_name_s.as_str();
-    let transcript_id_s = exon_gr.get_column_name("transcript_id", false)?.to_string();
+    let transcript_id_s = exon_gr.get_column_name("transcript_id", false)?;
     let transcript_id = transcript_id_s.as_str();
 
     // Next, we fill the missing gene_id and gene_name fields
@@ -332,14 +331,11 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.introns(None, None, None, true)?;
 
-                    info!(
-                        "Processing {} intronic records",
-                        intron_gr.df().height(),
-                    );
+                    info!("Processing {} intronic records", intron_gr.df().height(),);
 
                     if !no_flanking_merge {
                         intron_gr.extend(
-                            flank_length as i64,
+                            flank_length,
                             &options::ExtendOption::Both,
                             false,
                         )?;
@@ -404,18 +400,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     let mut gene_gr = exon_gr.genes(None, true)?;
 
                     gene_gr.df = gene_gr
-                    .df
-                    .lazy()
-                    .with_column(
-                        col(gene_id).add(lit("-G")).alias("t2g_tx_id"),
-                    )
-                    .collect()?;
+                        .df
+                        .lazy()
+                        .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
+                        .collect()?;
 
                     // to this point, we have a valid exon df to work with.
-                    info!(
-                        "Proceed {} gene body records",
-                        gene_gr.df().height(),
-                    );
+                    info!("Proceed {} gene body records", gene_gr.df().height(),);
 
                     if dedup_seqs {
                         unspliced_recs.extend(
@@ -445,29 +436,24 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
-                    
-                    gene_t2g.with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
+
+                    gene_t2g
+                        .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
 
                     t2g_map.extend(&gene_t2g)?;
-
                 }
                 AugType::TranscriptBody => {
                     // Then, we get the introns
                     let mut tx_gr = exon_gr.transcripts(None, true)?;
 
                     tx_gr.df = tx_gr
-                    .df
-                    .lazy()
-                    .with_column(
-                        col(gene_id).add(lit("-T")).alias("t2g_tx_id"),
-                    )
-                    .collect()?;
+                        .df
+                        .lazy()
+                        .with_column(col(gene_id).add(lit("-T")).alias("t2g_tx_id"))
+                        .collect()?;
 
                     // to this point, we have a valid exon df to work with.
-                    info!(
-                        "Proceed {} transcript body records",
-                        tx_gr.df().height(),
-                    );
+                    info!("Proceed {} transcript body records", tx_gr.df().height(),);
 
                     if dedup_seqs {
                         unspliced_recs.extend(
@@ -639,25 +625,23 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // we process unspliced records first
         if !unspliced_recs.is_empty() {
             // for each record, if the sequence is not in the hashset, we write it to the file
-            for r in unspliced_recs.iter() {
+            for r in unspliced_recs.iter().flatten() {
                 // as we might get empty sequence (oob)
                 // we need to check if the record is empty
-                if let Some(r) = r {
-                    if seq_hs.insert(
-                        r.sequence()
-                            .get(..)
-                            .with_context(|| {
-                                format!("Failed getting sequence for record {}", r.name())
-                            })?
-                            .to_owned(),
-                    ) {
-                        writer.write_record(r).with_context(|| {
-                            format!(
-                                "Could not write the sequence of spliced transcript {} to the output file",
-                                r.name()
-                            )
-                        })?;
-                    }
+                if seq_hs.insert(
+                    r.sequence()
+                        .get(..)
+                        .with_context(|| {
+                            format!("Failed getting sequence for record {}", r.name())
+                        })?
+                        .to_owned(),
+                ) {
+                    writer.write_record(r).with_context(|| {
+                        format!(
+                            "Could not write the sequence of spliced transcript {} to the output file",
+                            r.name()
+                        )
+                    })?;
                 }
             }
         }
@@ -666,13 +650,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // Till this point, we are done with the fasta file
     // we need to write the t2g and gene_id_to_name files
 
-    let mut file = std::fs::File::create(&out_t2g_name)?;
+    let mut file = std::fs::File::create(out_t2g_name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')
         .finish(&mut t2g_map)?;
 
-    let mut file = std::fs::File::create(&out_gid2name)?;
+    let mut file = std::fs::File::create(out_gid2name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')

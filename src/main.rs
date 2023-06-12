@@ -57,16 +57,16 @@ impl AsRef<str> for AugType {
 
 #[derive(Args, Debug)]
 pub struct AugRefOpts {
-        /// The path to a genome fasta file.
-        genome: PathBuf,
-        /// The path to a gene annotation gtf/gff3 file.
-        genes: PathBuf,
-        /// The path to the output directory (will be created if it doesn't exist).
-        out_dir: PathBuf,
+    /// The path to a genome fasta file.
+    genome: PathBuf,
+    /// The path to a gene annotation gtf/gff3 file.
+    genes: PathBuf,
+    /// The path to the output directory (will be created if it doesn't exist).
+    out_dir: PathBuf,
 
-        /// Comma separated types of augmented sequences to include in the output FASTA file on top of spliced transcripts.
-        /// Available options are `intronic` (or `i` for short), `gene-body` (or `g`), and `transcript-body` (or `t`).
-        #[arg(
+    /// Comma separated types of augmented sequences to include in the output FASTA file on top of spliced transcripts.
+    /// Available options are `intronic` (or `i` for short), `gene-body` (or `g`), and `transcript-body` (or `t`).
+    #[arg(
             short,
             long,
             display_order = 1,
@@ -75,66 +75,66 @@ pub struct AugRefOpts {
             value_parser = PossibleValuesParser::new(&["i", "g", "t", "intronic", "gene-body", "transcript-body"]).map(|s| AugType::from(s.as_str())),
             hide_possible_values = true,
         )]
-        aug_type: Option<Vec<AugType>>,
+    aug_type: Option<Vec<AugType>>,
 
-        /// A flag of not including spliced transcripts in the output FASTA file. (usually there should be a good reason to do so)
-        #[arg(long, display_order = 3)]
-        no_transcript: bool,
+    /// A flag of not including spliced transcripts in the output FASTA file. (usually there should be a good reason to do so)
+    #[arg(long, display_order = 3)]
+    no_transcript: bool,
 
-        /// The read length of the single-cell experiment being processed (determines flank size).
-        #[arg(
-            short,
-            long,
-            help_heading = "Intronic Sequence Options",
-            display_order = 1,
-            default_value_t = 91,
-            requires_if("intronic", "aug_type")
-        )]
-        read_length: i64,
+    /// The read length of the single-cell experiment being processed (determines flank size).
+    #[arg(
+        short,
+        long,
+        help_heading = "Intronic Sequence Options",
+        display_order = 1,
+        default_value_t = 91,
+        requires_if("intronic", "aug_type")
+    )]
+    read_length: i64,
 
-        /// Determines the length of sequence subtracted from the read length to obtain the flank length.
-        #[arg(
-            long,
-            help_heading = "Intronic Sequence Options",
-            display_order = 2,
-            default_value_t = 5,
-            requires_if("intronic", "aug_type")
-        )]
-        flank_trim_length: i64,
+    /// Determines the length of sequence subtracted from the read length to obtain the flank length.
+    #[arg(
+        long,
+        help_heading = "Intronic Sequence Options",
+        display_order = 2,
+        default_value_t = 5,
+        requires_if("intronic", "aug_type")
+    )]
+    flank_trim_length: i64,
 
-        /// Indicates whether flank lengths will be considered when merging introns.
-        #[arg(
-            long,
-            help_heading = "Intronic Sequence Options",
-            display_order = 3,
-            requires_if("intronic", "aug_type")
-        )]
-        no_flanking_merge: bool,
+    /// Indicates whether flank lengths will be considered when merging introns.
+    #[arg(
+        long,
+        help_heading = "Intronic Sequence Options",
+        display_order = 3,
+        requires_if("intronic", "aug_type")
+    )]
+    no_flanking_merge: bool,
 
-        /// The file name prefix of the generated output files.
-        #[arg(short = 'p', long, default_value = "roers_ref", display_order = 2)]
-        filename_prefix: String,
+    /// The file name prefix of the generated output files.
+    #[arg(short = 'p', long, default_value = "roers_ref", display_order = 2)]
+    filename_prefix: String,
 
-        /// Indicates whether identical sequences will be deduplicated.
-        #[arg(long = "dedup", display_order = 1)]
-        dedup_seqs: bool,
+    /// Indicates whether identical sequences will be deduplicated.
+    #[arg(long = "dedup", display_order = 1)]
+    dedup_seqs: bool,
 
-        /// The path to an extra spliced sequence fasta file.
-        #[arg(long, help_heading = "Extra Spliced Sequence File", display_order = 3)]
-        extra_spliced: Option<PathBuf>,
+    /// The path to an extra spliced sequence fasta file.
+    #[arg(long, help_heading = "Extra Spliced Sequence File", display_order = 3)]
+    extra_spliced: Option<PathBuf>,
 
-        /// The path to an extra unspliced sequence fasta file.
-        #[arg(
+    /// The path to an extra unspliced sequence fasta file.
+    #[arg(
             // short,
             long,
             help_heading = "Extra Unspliced Sequence File",
             display_order = 3,
         )]
-        extra_unspliced: Option<PathBuf>,
+    extra_unspliced: Option<PathBuf>,
 
-        /// Denotes that the input annotation is a GFF3 (instead of GTF) file
-        #[arg(long = "gff3", display_order = 4)]
-        gff3: bool,
+    /// Denotes that the input annotation is a GFF3 (instead of GTF) file
+    #[arg(long = "gff3", display_order = 4)]
+    gff3: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -169,9 +169,7 @@ fn main() -> anyhow::Result<()> {
     let cli_args = Cli::parse();
 
     match cli_args.command {
-        Commands::MakeRef(aug_ref_opts) => {
-            make_ref(aug_ref_opts)
-        }?,
+        Commands::MakeRef(aug_ref_opts) => { make_ref(aug_ref_opts) }?,
     }
 
     // get stats
@@ -181,7 +179,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
-    // clean this up 
+    // clean this up
     let genome_path: PathBuf = aug_ref_opts.genome;
     let gtf_path: PathBuf = aug_ref_opts.genes;
     let out_dir: PathBuf = aug_ref_opts.out_dir;

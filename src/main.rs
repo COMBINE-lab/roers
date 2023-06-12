@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
-
+use std::ops::Add;
 #[global_allocator]
 static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
@@ -272,7 +272,7 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");
         fc.update("gene_id", "gene_id")?;
-        // push to the df
+        // push to the df·
         df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
@@ -342,6 +342,7 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         UniqueKeepStrategy::Any,
         None,
     )?;
+    t2g_map.rename(transcript_id, "t2g_tx_id")?;
 
     // if we have augmented sequences, we need three columns
     if aug_type.is_some() {
@@ -373,6 +374,11 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // Then, we get the introns
                     let mut intron_gr = exon_gr.introns(None, None, None, true)?;
 
+                    info!(
+                        "Processing {} intronic records",
+                        intron_gr.df().height(),
+                    );
+
                     if !no_flanking_merge {
                         intron_gr.extend(
                             flank_length as i64,
@@ -395,7 +401,7 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         .lazy()
                         .with_column(
                             concat_str([col(gene_id), col("intron_number")], "-I")
-                                .alias("intron_id"),
+                                .alias("t2g_tx_id"),
                         )
                         .collect()?;
 
@@ -405,7 +411,7 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                                 .get_sequences(
                                     &genome_path,
                                     false,
-                                    Some("intron_id"),
+                                    Some("t2g_tx_id"),
                                     options::OOBOption::Truncate,
                                 )?
                                 .into_iter(),
@@ -415,19 +421,19 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             &genome_path,
                             &out_fa,
                             false,
-                            Some("intron_id"),
+                            Some("t2g_tx_id"),
                             options::OOBOption::Truncate,
                             true,
                         )?;
                     }
 
                     // we need to update the t2g mapping for introns
-                    let mut intron_t2g = intron_gr.df().select(["intron_id", gene_id])?.unique(
+                    let mut intron_t2g = intron_gr.df().select(["t2g_tx_id", gene_id])?.unique(
                         None,
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
-                    intron_t2g.rename("intron_id", transcript_id)?;
+                    // intron_t2g.rename("intron_id", transcript_id)?;
                     intron_t2g.with_column(Series::new(
                         "splice_status",
                         vec!["U"; intron_t2g.height()],
@@ -439,13 +445,27 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // Then, we get the introns
                     let mut gene_gr = exon_gr.genes(None, true)?;
 
+                    gene_gr.df = gene_gr
+                    .df
+                    .lazy()
+                    .with_column(
+                        col(gene_id).add(lit("-G")).alias("t2g_tx_id"),
+                    )
+                    .collect()?;
+
+                    // to this point, we have a valid exon df to work with.
+                    info!(
+                        "Proceed {} gene body records",
+                        gene_gr.df().height(),
+                    );
+
                     if dedup_seqs {
                         unspliced_recs.extend(
                             gene_gr
                                 .get_sequences(
                                     &genome_path,
                                     false,
-                                    Some(gene_id),
+                                    Some("t2g_tx_id"),
                                     options::OOBOption::Truncate,
                                 )?
                                 .into_iter(),
@@ -455,28 +475,41 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             &genome_path,
                             &out_fa,
                             false,
-                            Some(gene_id),
+                            Some("t2g_tx_id"),
                             options::OOBOption::Truncate,
                             true,
                         )?;
                     }
 
                     // we need to update the t2g mapping for genes
-                    let mut gene_t2g = gene_gr.df().select([gene_id, gene_id])?.unique(
+                    let mut gene_t2g = gene_gr.df().select(["t2g_tx_id", gene_id])?.unique(
                         None,
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
-                    gene_t2g.rename(gene_id, transcript_id)?;
-
-                    gene_t2g
-                        .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
+                    
+                    gene_t2g.with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
 
                     t2g_map.extend(&gene_t2g)?;
+
                 }
                 AugType::TranscriptBody => {
                     // Then, we get the introns
                     let mut tx_gr = exon_gr.transcripts(None, true)?;
+
+                    tx_gr.df = tx_gr
+                    .df
+                    .lazy()
+                    .with_column(
+                        col(gene_id).add(lit("-T")).alias("t2g_tx_id"),
+                    )
+                    .collect()?;
+
+                    // to this point, we have a valid exon df to work with.
+                    info!(
+                        "Proceed {} transcript body records",
+                        tx_gr.df().height(),
+                    );
 
                     if dedup_seqs {
                         unspliced_recs.extend(
@@ -500,14 +533,13 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         )?;
                     }
 
-                    // we need to update the t2g mapping for introns
-                    let mut tx_t2g = tx_gr.df().select([transcript_id, gene_id])?.unique(
+                    // we need to update the t2g mapping for genes
+                    let mut tx_t2g = tx_gr.df().select(["t2g_tx_id", gene_id])?.unique(
                         None,
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
                     tx_t2g.with_column(Series::new("splice_status", vec!["U"; tx_t2g.height()]))?;
-
                     t2g_map.extend(&tx_t2g)?;
                 }
                 _ => {
@@ -722,6 +754,8 @@ fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         serde_json::to_string_pretty(&index_info).unwrap(),
     )
     .with_context(|| format!("could not write {}", info_file.display()))?;
+
+    info!("Done!");
 
     Ok(())
 }

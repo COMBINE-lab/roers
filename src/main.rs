@@ -786,5 +786,7 @@ fn make_ref(
     )
     .with_context(|| format!("could not write {}", info_file.display()))?;
 
+    info!("Done!");
+
     Ok(())
 }

@@ -15,7 +15,7 @@ use std::ops::Add;
 #[global_allocator]
 static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
-use clap::{command, Parser, Subcommand};
+use clap::{command, Args, Parser, Subcommand};
 
 /// The type of sequences we might include in the output reference FASTA file
 /// to map against for quantification with
@@ -55,11 +55,8 @@ impl AsRef<str> for AugType {
     }
 }
 
-#[derive(Debug, Subcommand)]
-pub enum Commands {
-    /// build the (expanded) reference index
-    #[command(arg_required_else_help = true)]
-    MakeRef {
+#[derive(Args, Debug)]
+pub struct AugRefOpts {
         /// The path to a genome fasta file.
         genome: PathBuf,
         /// The path to a gene annotation gtf/gff3 file.
@@ -138,7 +135,13 @@ pub enum Commands {
         /// Denotes that the input annotation is a GFF3 (instead of GTF) file
         #[arg(long = "gff3", display_order = 4)]
         gff3: bool,
-    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    /// build the (expanded) reference index
+    #[command(arg_required_else_help = true)]
+    MakeRef(AugRefOpts),
 }
 
 #[derive(Debug, Parser)]
@@ -166,7 +169,8 @@ fn main() -> anyhow::Result<()> {
     let cli_args = Cli::parse();
 
     match cli_args.command {
-        Commands::MakeRef {
+        Commands::MakeRef(
+            AugRefOpts{
             genome,
             genes,
             out_dir,
@@ -180,7 +184,8 @@ fn main() -> anyhow::Result<()> {
             extra_spliced,
             extra_unspliced,
             gff3,
-        } => {
+            }
+        ) => {
             make_ref(
                 genome,
                 genes,

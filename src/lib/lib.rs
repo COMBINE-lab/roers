@@ -57,11 +57,11 @@ impl AsRef<str> for AugType {
 #[derive(Args, Debug)]
 pub struct AugRefOpts {
     /// The path to a genome fasta file.
-    genome: PathBuf,
+    pub genome: PathBuf,
     /// The path to a gene annotation gtf/gff3 file.
-    genes: PathBuf,
+    pub genes: PathBuf,
     /// The path to the output directory (will be created if it doesn't exist).
-    out_dir: PathBuf,
+    pub out_dir: PathBuf,
 
     /// Comma separated types of augmented sequences to include in the output FASTA file on top of spliced transcripts.
     /// Available options are `intronic` (or `i` for short), `gene-body` (or `g`), and `transcript-body` (or `t`).
@@ -74,11 +74,11 @@ pub struct AugRefOpts {
             value_parser = PossibleValuesParser::new(&["i", "g", "t", "intronic", "gene-body", "transcript-body"]).map(|s| AugType::from(s.as_str())),
             hide_possible_values = true,
         )]
-    aug_type: Option<Vec<AugType>>,
+    pub aug_type: Option<Vec<AugType>>,
 
     /// A flag of not including spliced transcripts in the output FASTA file. (usually there should be a good reason to do so)
     #[arg(long, display_order = 3)]
-    no_transcript: bool,
+    pub no_transcript: bool,
 
     /// The read length of the single-cell experiment being processed (determines flank size).
     #[arg(
@@ -89,7 +89,7 @@ pub struct AugRefOpts {
         default_value_t = 91,
         requires_if("intronic", "aug_type")
     )]
-    read_length: i64,
+    pub read_length: i64,
 
     /// Determines the length of sequence subtracted from the read length to obtain the flank length.
     #[arg(
@@ -99,7 +99,7 @@ pub struct AugRefOpts {
         default_value_t = 5,
         requires_if("intronic", "aug_type")
     )]
-    flank_trim_length: i64,
+    pub flank_trim_length: i64,
 
     /// Indicates whether flank lengths will be considered when merging introns.
     #[arg(
@@ -108,19 +108,19 @@ pub struct AugRefOpts {
         display_order = 3,
         requires_if("intronic", "aug_type")
     )]
-    no_flanking_merge: bool,
+    pub no_flanking_merge: bool,
 
     /// The file name prefix of the generated output files.
     #[arg(short = 'p', long, default_value = "roers_ref", display_order = 2)]
-    filename_prefix: String,
+    pub filename_prefix: String,
 
     /// Indicates whether identical sequences will be deduplicated.
     #[arg(long = "dedup", display_order = 1)]
-    dedup_seqs: bool,
+    pub dedup_seqs: bool,
 
     /// The path to an extra spliced sequence fasta file.
     #[arg(long, help_heading = "Extra Spliced Sequence File", display_order = 3)]
-    extra_spliced: Option<PathBuf>,
+    pub extra_spliced: Option<PathBuf>,
 
     /// The path to an extra unspliced sequence fasta file.
     #[arg(
@@ -129,11 +129,11 @@ pub struct AugRefOpts {
             help_heading = "Extra Unspliced Sequence File",
             display_order = 3,
         )]
-    extra_unspliced: Option<PathBuf>,
+    pub extra_unspliced: Option<PathBuf>,
 
     /// Denotes that the input annotation is a GFF3 (instead of GTF) file
     #[arg(long = "gff3", display_order = 4)]
-    gff3: bool,
+    pub gff3: bool,
 }
 
 pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {

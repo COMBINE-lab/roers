@@ -53,7 +53,7 @@ impl AsRef<str> for AugType {
     }
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Clone, Debug)]
 pub struct AugRefOpts {
     /// The path to a genome fasta file.
     pub genome: PathBuf,

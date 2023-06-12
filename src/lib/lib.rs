@@ -4,6 +4,7 @@ use grangers::grangers::{options, Grangers};
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde_json::json;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::ops::Add;
 use std::path::PathBuf;
@@ -18,7 +19,7 @@ use clap::Args;
 /// The type of sequences we might include in the output reference FASTA file
 /// to map against for quantification with
 /// alevin-fry.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum AugType {
     /// The sequence of Spliced transcripts
     Transcript,
@@ -53,7 +54,7 @@ impl AsRef<str> for AugType {
     }
 }
 
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone, Debug, Serialize)]
 pub struct AugRefOpts {
     /// The path to a genome fasta file.
     pub genome: PathBuf,

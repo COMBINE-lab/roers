@@ -699,13 +699,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // Till this point, we are done with the fasta file
     // we need to write the t2g and gene_id_to_name files
 
-    let mut file = std::fs::File::create(out_t2g_name)?;
+    let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')
         .finish(&mut t2g_map)?;
 
-    let mut file = std::fs::File::create(out_gid2name)?;
+    let mut file = std::fs::File::create(&out_gid2name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
         .with_delimiter(b'\t')
@@ -719,6 +719,8 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         "command" : "roers makeref",
         "roers_version" : v,
         "output_fasta": out_fa,
+        "output_t2g": out_t2g_name,
+        "output_gid2name": out_gid2name,
         "args" : {
             "genome" : genome_path,
             "genes" : gtf_path,

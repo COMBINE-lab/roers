@@ -166,7 +166,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     if let Some(extra_unspliced) = &extra_unspliced {
         if !extra_unspliced.exists() {
-            anyhow::bail!("The extra spliced sequence file does not exist. Cannot proceed");
+            anyhow::bail!("The extra unspliced sequence file does not exist. Cannot proceed");
         }
     }
 
@@ -229,6 +229,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // we get gene name and rename it to gene_id
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");
+        // we update the field_columns
         fc.update("gene_id", "gene_id")?;
         // push to the df·
         df.with_column(gene_id)?;
@@ -245,6 +246,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         df.with_column(gene_name)?;
     }
 
+    // TODO: Getting the string and then making the &str are annoying, maybe we should have a better way to do this
     exon_gr.field_columns = fc;
     let gene_id_s = exon_gr.get_column_name("gene_id", false)?;
     let gene_id = gene_id_s.as_str();
@@ -334,22 +336,37 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
                     info!("Processing {} intronic records", intron_gr.df().height(),);
 
-                    if !no_flanking_merge {
-                        intron_gr.extend(
-                            flank_length,
-                            &options::ExtendOption::Both,
+                    // no_flanking_merge decides when the order of merge and extend
+                    // if no_flanking_merge is true, we merge first, then extend 
+                    if no_flanking_merge {
+                        // Then, we merge the overlapping introns
+                        intron_gr = intron_gr.merge(
+                            &[intron_gr.get_column_name(gene_id, false)?],
                             false,
+                            None,
+                            None,
                         )?;
                     }
 
-                    // Then, we merge the overlapping introns
-                    intron_gr = intron_gr.merge(
-                        &[intron_gr.get_column_name(gene_id, false)?],
+                    // add flanking end to both side of each intron
+                    intron_gr.extend(
+                        flank_length,
+                        &options::ExtendOption::Both,
                         false,
-                        None,
-                        None,
                     )?;
+                    
+                    // if no_flanking_merge is false, we merge after extend
+                    if !no_flanking_merge {
+                        // Then, we merge the overlapping introns
+                        intron_gr = intron_gr.merge(
+                            &[intron_gr.get_column_name(gene_id, false)?],
+                            false,
+                            None,
+                            None,
+                        )?;
+                    }
 
+                    // Then, we give a unique id to each intron
                     intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), true)?;
                     intron_gr.df = intron_gr
                         .df
@@ -388,27 +405,32 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
-                    // intron_t2g.rename("intron_id", transcript_id)?;
+
+                    // if we are here, we need to add a column for splice_status cuz it is an augmented reference
                     intron_t2g.with_column(Series::new(
                         "splice_status",
                         vec!["U"; intron_t2g.height()],
                     ))?;
 
+                    // we extend the t2g mapping for introns
                     t2g_map.extend(&intron_t2g)?;
                 }
                 AugType::GeneBody => {
-                    // Then, we get the introns
+                    // first we get the range (gene body) of each gene
                     let mut gene_gr = exon_gr.genes(None, true)?;
 
+                    // we append a -G to each sequence here to mark that they are gene-body seuqences
                     gene_gr.df = gene_gr
                         .df
                         .lazy()
                         .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
                         .collect()?;
 
-                    // to this point, we have a valid exon df to work with.
+                    // say something
                     info!("Proceed {} gene body records", gene_gr.df().height(),);
 
+                    // if dedup_seqs is true, we want to store the records in a vector
+                    // otherwise, we write them to the file directly.
                     if dedup_seqs {
                         unspliced_recs.extend(
                             gene_gr
@@ -438,24 +460,29 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         None,
                     )?;
 
+                    // add the splice status column
                     gene_t2g
                         .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
 
+                    // extend t2g_map for genes
                     t2g_map.extend(&gene_t2g)?;
                 }
                 AugType::TranscriptBody => {
-                    // Then, we get the introns
+                    // we get the range (transcript body) of each transcript
                     let mut tx_gr = exon_gr.transcripts(None, true)?;
 
+                    // Then we append a -T to mark the sequence as transcript body 
                     tx_gr.df = tx_gr
                         .df
                         .lazy()
                         .with_column(col(gene_id).add(lit("-T")).alias("t2g_tx_id"))
                         .collect()?;
 
-                    // to this point, we have a valid exon df to work with.
+                    // say something
                     info!("Proceed {} transcript body records", tx_gr.df().height(),);
 
+                    // if dedup_seqs, we store the records in a vector
+                    // otherwise, we write them to the file directly
                     if dedup_seqs {
                         unspliced_recs.extend(
                             tx_gr
@@ -497,7 +524,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         }
     }
 
-    // if there are extra spliced sequences, we include them in
+    // if there are extra spliced sequences, we include them in if dedup is set, otherwise we write them to the file
     if let Some(path) = &extra_spliced {
         // create extra file reader
         let mut reader = std::fs::File::open(path)
@@ -534,14 +561,24 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         }
 
         // extend t2g_map for the custom spliced targets
-        t2g_map.extend(&df!(
-            "transcript_id" => &names,
+        let mut extra_t2g = df!(
+            "t2g_tx_id" => &names,
             "gene_id" => &names,
-            "splice_status" => &vec!["S"; names.len()]
-        )?)?;
+        )?;
+
+        if aug_type.is_some() {                    
+            // if we are here, we need to add a column for splice_status cuz it is an augmented reference
+            extra_t2g.with_column(Series::new(
+                "splice_status",
+                vec!["S"; extra_t2g.height()],
+            ))?;
+
+        }
+        
+        t2g_map.extend(&extra_t2g)?;
 
         // extend gene_id_to_name for the custom spliced targets
-        gene_id_to_name.extend(&df!("gene_id" => &names, "gene_name" => &names)?)?;
+        gene_id_to_name.extend(&df!(gene_id => &names, gene_name => &names)?)?;
     };
 
     if let Some(path) = &extra_unspliced {
@@ -576,30 +613,41 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             }
         }
 
-        // extend a dataframe for the custom unspliced targets
-        t2g_map.extend(&df!(
-            "transcript_id" => &names,
+        // extend t2g_map for the custom spliced targets
+        let mut extra_t2g = df!(
+            "t2g_tx_id" => &names,
             "gene_id" => &names,
-            "splice_status" => &vec!["U"; names.len()]
-        )?)?;
+        )?;
 
-        // extend gene_id_to_name for the custom unspliced targets
-        gene_id_to_name.extend(&df!("gene_id" => &names, "gene_name" => &names)?)?;
+        if aug_type.is_some() {                    
+            // if we are here, we need to add a column for splice_status cuz it is an augmented reference
+            extra_t2g.with_column(Series::new(
+                "splice_status",
+                vec!["U"; extra_t2g.height()],
+            ))?;
+        }
+        
+        t2g_map.extend(&extra_t2g)?;
+
+        // extend gene_id_to_name for the custom spliced targets
+        gene_id_to_name.extend(&df!(gene_id => &names, gene_name => &names)?)?;
     };
 
     // at this point, if we don't do deduplication, the fasta file should be ready
     // if we do, we need to check if each seq is the unique one before write to the file
     if dedup_seqs {
+        // we create the writer
+        // we will not append because this should be the start of the file
         let mut writer = noodles::fasta::Writer::new(
             std::fs::OpenOptions::new()
-                .append(true)
+                .append(false)
                 .open(&out_fa)
                 .with_context(|| {
                     format!("Could not open the output file {:?}", out_fa.as_os_str())
                 })?,
         );
 
-        // we need a hashset to record if we have seen a sequence
+        // we need a hashset to check if we have seen a sequence
         let mut seq_hs = HashSet::new();
         // we process spliced records first
         if !spliced_recs.is_empty() {
@@ -663,7 +711,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         .with_delimiter(b'\t')
         .finish(&mut gene_id_to_name)?;
 
-    let info_file = out_dir.join("roers_makeref.json");
+    let info_file = out_dir.join("roers_make-ref.json");
 
     let v = clap::crate_version!();
 

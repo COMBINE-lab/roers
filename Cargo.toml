@@ -2,6 +2,31 @@
 name = "roers"
 version = "0.1.0"
 edition = "2021"
+authors = [
+  "Dongze He <dhe17@umd.edu>",
+  "Rob Patro <rob@cs.umd.edu>",
+]
+description = "A tool to prepare augmented annotations for single-cell RNA-seq analysis."
+license-file = "LICENSE"
+readme = "README.md"
+repository = "https://github.com/COMBINE-lab/roers"
+homepage = "https://github.com/COMBINE-lab/roers"
+include = [
+  "/src/lib/lib.rs",
+  "/src/main.rs",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/README.md",
+  "/LICENSE",
+]
+keywords = [
+  "genomics",
+  "GTF-GFF",
+  "splici",
+  "scRNA-seq",
+  "augmented-reference",
+]
+categories = ["science", "data-structures"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [[bin]]
@@ -15,11 +40,11 @@ path = "src/lib/lib.rs"
 [dependencies]
 anyhow = "1.0.71"
 clap = { version = "4.3.3", features = ["derive", "wrap_help","cargo"] }
-grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev" }
+grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.1.4" }
 polars = { version = "0.30", features = ["lazy","dataframe_arithmetic","sort_multiple", "checked_arithmetic","rows","dtype-struct", "dtype-categorical", "list_eval","concat_str", "strings"]}
 peak_alloc = "0.2.0"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 noodles = { version = "0.41.0", features = ["fasta"] }
-serde = {version = "1.0.163", features = ["derive"]}
+serde = {version = "1.0.164", features = ["derive"]}
 serde_json = "1.0.96"

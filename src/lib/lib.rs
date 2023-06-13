@@ -1,10 +1,10 @@
 use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
-use grangers::grangers::{options, Grangers};
+use grangers::{options, Grangers};
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
-use serde_json::json;
 use serde::Serialize;
+use serde_json::json;
 use std::collections::HashSet;
 use std::ops::Add;
 use std::path::PathBuf;
@@ -337,7 +337,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     info!("Processing {} intronic records", intron_gr.df().height(),);
 
                     // no_flanking_merge decides when the order of merge and extend
-                    // if no_flanking_merge is true, we merge first, then extend 
+                    // if no_flanking_merge is true, we merge first, then extend
                     if no_flanking_merge {
                         // Then, we merge the overlapping introns
                         intron_gr = intron_gr.merge(
@@ -349,12 +349,8 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     }
 
                     // add flanking end to both side of each intron
-                    intron_gr.extend(
-                        flank_length,
-                        &options::ExtendOption::Both,
-                        false,
-                    )?;
-                    
+                    intron_gr.extend(flank_length, &options::ExtendOption::Both, false)?;
+
                     // if no_flanking_merge is false, we merge after extend
                     if !no_flanking_merge {
                         // Then, we merge the overlapping introns
@@ -471,7 +467,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // we get the range (transcript body) of each transcript
                     let mut tx_gr = exon_gr.transcripts(None, true)?;
 
-                    // Then we append a -T to mark the sequence as transcript body 
+                    // Then we append a -T to mark the sequence as transcript body
                     tx_gr.df = tx_gr
                         .df
                         .lazy()
@@ -566,15 +562,11 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             "gene_id" => &names,
         )?;
 
-        if aug_type.is_some() {                    
+        if aug_type.is_some() {
             // if we are here, we need to add a column for splice_status cuz it is an augmented reference
-            extra_t2g.with_column(Series::new(
-                "splice_status",
-                vec!["S"; extra_t2g.height()],
-            ))?;
-
+            extra_t2g.with_column(Series::new("splice_status", vec!["S"; extra_t2g.height()]))?;
         }
-        
+
         t2g_map.extend(&extra_t2g)?;
 
         // extend gene_id_to_name for the custom spliced targets
@@ -619,14 +611,11 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             "gene_id" => &names,
         )?;
 
-        if aug_type.is_some() {                    
+        if aug_type.is_some() {
             // if we are here, we need to add a column for splice_status cuz it is an augmented reference
-            extra_t2g.with_column(Series::new(
-                "splice_status",
-                vec!["U"; extra_t2g.height()],
-            ))?;
+            extra_t2g.with_column(Series::new("splice_status", vec!["U"; extra_t2g.height()]))?;
         }
-        
+
         t2g_map.extend(&extra_t2g)?;
 
         // extend gene_id_to_name for the custom spliced targets

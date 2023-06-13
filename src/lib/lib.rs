@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
-use grangers::grangers::{options, Grangers};
+use grangers::{options, Grangers};
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;

@@ -5,7 +5,8 @@ use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, hash_map::Entry};
+use std::io::{BufWriter, Write};
 use std::ops::Add;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -637,27 +638,42 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         );
 
         // we need a hashset to check if we have seen a sequence
-        let mut seq_hs = HashSet::new();
+        // this map maps the key (sequence) to the 
+        // value (first inserted name having this sequence). If we 
+        // see an identical sequence, the value gives us the name of 
+        // what was collapsed into.
+        let mut seq_hs = HashMap::<Vec<u8>, &str>::new();
+
+        let mut collisions: Vec<(&str, &str)> = Vec::new();
+
         // we process spliced records first
         if !spliced_recs.is_empty() {
             // for each record, if the sequence is not in the hashset, we write it to the file
             for r in spliced_recs.iter() {
-                if seq_hs.insert(
+                match seq_hs.entry(
                     r.sequence()
                         .get(..)
                         .with_context(|| {
                             format!("Failed getting sequence for record {}", r.name())
                         })?
-                        .to_owned(),
-                ) {
-                    writer.write_record(r).with_context(|| {
-                        format!(
-                            "Could not write the sequence of spliced transcript {} to the output file",
-                            r.name()
-                        )
-                    })?;
-                }
-            }
+                        .to_owned()) {
+                        // if we have already seen this key then add this to the list of collisions
+                        Entry::Occupied(e) => {
+                            collisions.push((e.get(), r.name()));
+                        },
+                        // otherwise, associate this sequence with the given name, and write the 
+                        // sequence to file
+                        Entry::Vacant(ve) => {
+                            ve.insert(r.name());
+                            writer.write_record(r).with_context(|| {
+                                format!(
+                                    "Could not write the sequence of spliced transcript {} to the output file",
+                                    r.name()
+                                )
+                            })?;
+                        }
+                    }
+            } 
         }
 
         // we process unspliced records first
@@ -666,23 +682,39 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             for r in unspliced_recs.iter().flatten() {
                 // as we might get empty sequence (oob)
                 // we need to check if the record is empty
-                if seq_hs.insert(
+                match seq_hs.entry(
                     r.sequence()
                         .get(..)
                         .with_context(|| {
                             format!("Failed getting sequence for record {}", r.name())
                         })?
-                        .to_owned(),
-                ) {
-                    writer.write_record(r).with_context(|| {
-                        format!(
-                            "Could not write the sequence of spliced transcript {} to the output file",
-                            r.name()
-                        )
-                    })?;
-                }
+                        .to_owned()) {
+                        // if we have already seen this key then add this to the list of collisions
+                        Entry::Occupied(e) => {
+                            collisions.push((e.get(), r.name()));
+                        },
+                        // otherwise, associate this sequence with the given name, and write the 
+                        // sequence to file
+                        Entry::Vacant(ve) => {
+                            ve.insert(r.name());
+                            writer.write_record(r).with_context(|| {
+                                format!(
+                                    "Could not write the sequence of spliced transcript {} to the output file",
+                                    r.name()
+                                )
+                            })?;
+                        }
+                    }
             }
         }
+
+        let dupfile = std::fs::File::create(out_dir.join("duplicate_seqs.tsv"))?;
+        let mut dup_writer = BufWriter::new(dupfile);
+
+        for (retained, dup) in collisions.iter() {
+            writeln!(&mut dup_writer, "{}\t{}", retained, dup)?;
+        }
+
     } // if dedup_seq
 
     // Till this point, we are done with the fasta file

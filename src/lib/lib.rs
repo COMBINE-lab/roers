@@ -196,7 +196,7 @@ impl SeqDedup {
         // retained key are adjacent
         self.collisions.sort();
 
-        writeln!(dup_writer, "RetainedRef\tDuplicateRef\n")?;
+        writeln!(dup_writer, "RetainedRef\tDuplicateRef")?;
 
         for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
             for d in group {
@@ -493,6 +493,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     gene_gr.df = gene_gr
                         .df
                         .lazy()
+                        .sort(gene_id, Default::default())
                         .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
                         .collect()?;
 

@@ -458,6 +458,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             concat_str([col(gene_id), col("intron_number")], "-I")
                                 .alias("t2g_tx_id"),
                         )
+                        .sort(gene_id, Default::default())
                         .collect()?;
 
                     intron_gr.write_sequences_with_filter(

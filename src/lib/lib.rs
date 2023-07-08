@@ -1,18 +1,18 @@
 use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
+use itertools::Itertools;
+//use oomfi::*;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
-use itertools::Itertools;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{hash_map::Entry, HashMap};
 use std::io::{BufWriter, Write};
 use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
-use oomfi::*;
 
 //#[global_allocator]
 //static PEAK_ALLOC: PeakAlloc = PeakAlloc;
@@ -140,50 +140,52 @@ pub struct AugRefOpts {
 }
 
 struct SeqDedup {
-    seq_bloom: Bloom,
-    seq_hs: HashMap::<Vec<u8>, String>,
-    collisions: Vec<(String, String)>, 
+    //seq_bloom: Bloom,
+    seq_hs: HashMap<Vec<u8>, String>,
+    collisions: Vec<(String, String)>,
 }
 
 impl SeqDedup {
-    
     fn new() -> Self {
         Self {
-            seq_bloom: Bloom::new(5_000_000, 0.01),
+            //seq_bloom: Bloom::new(5_000_000, 0.01),
             seq_hs: HashMap::<Vec<u8>, String>::new(),
-            collisions: vec![]
+            collisions: vec![],
         }
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
-        let prob_dup = self.seq_bloom.query(rec.sequence().as_ref());
+        let sequence = rec
+            .sequence()
+            .get(..)
+            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
+        /*
+        let prob_dup = self.seq_bloom.query(sequence);
         if prob_dup {
-            match self.seq_hs.entry(
-                rec.sequence()
-                    .get(..)
-                    .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()))
-                    .to_owned()) {
-                    // if we have already seen this key then add this to the list of collisions
-                    Entry::Occupied(e) => {
-                        self.collisions.push((e.get().to_owned(), rec.name().to_owned()));
-                        false
-                    },
-                    // otherwise, associate this sequence with the given name, and write the 
-                    // sequence to file
-                    Entry::Vacant(ve) => {
-                        ve.insert(rec.name().to_owned());
-                        true
-                    }
-                }
-
-        } else {
-            self.seq_bloom.insert(rec.sequence().as_ref());
-            true 
+        */
+        match self.seq_hs.entry(sequence.to_owned()) {
+            // if we have already seen this key then add this to the list of collisions
+            Entry::Occupied(e) => {
+                self.collisions
+                    .push((e.get().to_owned(), rec.name().to_owned()));
+                false
+            }
+            // otherwise, associate this sequence with the given name, and write the
+            // sequence to file
+            Entry::Vacant(ve) => {
+                ve.insert(rec.name().to_owned());
+                true
+            }
         }
+        /*
+        } else {
+            self.seq_bloom.insert(sequence);
+            true
+        }
+        */
     }
 
     fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
-
         let dupfile = std::fs::File::create(out_dir.as_ref().join("duplicate_entries.tsv"))?;
         let mut dup_writer = BufWriter::new(dupfile);
 
@@ -191,7 +193,7 @@ impl SeqDedup {
         // retained key are adjacent
         self.collisions.sort();
 
-        writeln!(dup_writer, "RetainedRef\tDuplicateRef\n")?; 
+        writeln!(dup_writer, "RetainedRef\tDuplicateRef\n")?;
 
         for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
             for d in group {
@@ -261,23 +263,21 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     // we create the writer
     // we will not append because this should be the start of the file
-    let fa_out_file = 
-        std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(&out_fa_path)
-            .with_context(|| {
-                format!("Could not open the output file {:?}", out_fa_path.as_os_str())
-            })?;
+    let fa_out_file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&out_fa_path)
+        .with_context(|| {
+            format!(
+                "Could not open the output file {:?}",
+                out_fa_path.as_os_str()
+            )
+        })?;
 
     let mut sd = SeqDedup::new();
     let mut sd_callback = if dedup_seqs {
-        Some(
-            |r: &noodles::fasta::Record| {
-                sd.callback(r)
-            }
-        )
+        Some(|r: &noodles::fasta::Record| -> bool { sd.callback(r) })
     } else {
         None
     };
@@ -401,7 +401,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // Next, we write the transcript sequences to file if asked
     if !no_transcript {
         // Next, we write the transcript seuqences
-        exon_gr.write_transcript_sequences_with_filter(&genome_path, &fa_out_file, None, true, &mut sd_callback)?;
+        exon_gr.write_transcript_sequences_with_filter(
+            &genome_path,
+            &fa_out_file,
+            None,
+            true,
+            &mut sd_callback,
+        )?;
     }
 
     // Next, we write the augmented sequences
@@ -450,7 +456,6 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                                 .alias("t2g_tx_id"),
                         )
                         .collect()?;
-
 
                     intron_gr.write_sequences_with_filter(
                         &genome_path,
@@ -574,13 +579,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
-            } else { 
+            } else {
                 true
             };
 
             // TODO : @DongzeHe - do we want to add the name here
             // regardless of whether or not the sequence is a duplicate
-            // or do we only want to push the name if the sequence is 
+            // or do we only want to push the name if the sequence is
             // written to the file.
             names.push(record.name().to_owned().clone());
 
@@ -625,13 +630,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
-            } else { 
+            } else {
                 true
             };
 
             // TODO : @DongzeHe - do we want to add the name here
             // regardless of whether or not the sequence is a duplicate
-            // or do we only want to push the name if the sequence is 
+            // or do we only want to push the name if the sequence is
             // written to the file.
             names.push(record.name().to_owned().clone());
 
@@ -663,9 +668,11 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     };
 
     // at this point, the fasta file should be ready
-    // if we are doing deduplication, we need to write out 
+    // if we are doing deduplication, we need to write out
     // the duplicate entry information
-    if dedup_seqs { sd.write_duplicate_info(&out_dir)?; } 
+    if dedup_seqs {
+        sd.write_duplicate_info(&out_dir)?;
+    }
 
     // Till this point, we are done with the fasta file
     // we need to write the t2g and gene_id_to_name files

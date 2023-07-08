@@ -161,20 +161,18 @@ impl SeqDedup {
             match self.seq_hs.entry(
                 rec.sequence()
                     .get(..)
-                    .expect(
-                        &format!("Failed getting sequence for record {}", rec.name())
-                    )
+                    .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()))
                     .to_owned()) {
                     // if we have already seen this key then add this to the list of collisions
                     Entry::Occupied(e) => {
                         self.collisions.push((e.get().to_owned(), rec.name().to_owned()));
-                        return false;
+                        false
                     },
                     // otherwise, associate this sequence with the given name, and write the 
                     // sequence to file
                     Entry::Vacant(ve) => {
                         ve.insert(rec.name().to_owned());
-                        return true;
+                        true
                     }
                 }
 
@@ -196,7 +194,7 @@ impl SeqDedup {
         writeln!(dup_writer, "RetainedRef\tDuplicateRef\n")?; 
 
         for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
-            for d in group.into_iter() {
+            for d in group {
                 writeln!(dup_writer, "{}\t{}", key, d.1)?;
             }
         }
@@ -204,7 +202,7 @@ impl SeqDedup {
     }
 }
 
-
+#[allow(clippy::uninlined_format_args)]
 pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // clean this up
     let genome_path: PathBuf = aug_ref_opts.genome;

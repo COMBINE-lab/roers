@@ -2,7 +2,6 @@ use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
 use itertools::Itertools;
-//use oomfi::*;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
@@ -13,6 +12,7 @@ use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+use xxhash_rust::xxh3::xxh3_128_with_seed;
 
 //#[global_allocator]
 //static PEAK_ALLOC: PeakAlloc = PeakAlloc;
@@ -139,31 +139,29 @@ pub struct AugRefOpts {
     pub gff3: bool,
 }
 
+type HashType = u128;
+
 struct SeqDedup {
-    //seq_bloom: Bloom,
-    seq_hs: HashMap<Vec<u8>, String>,
+    seq_hs: HashMap<HashType, String>,
     collisions: Vec<(String, String)>,
 }
 
 impl SeqDedup {
     fn new() -> Self {
         Self {
-            //seq_bloom: Bloom::new(5_000_000, 0.01),
-            seq_hs: HashMap::<Vec<u8>, String>::new(),
+            seq_hs: HashMap::<HashType, String>::new(),
             collisions: vec![],
         }
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
-        let sequence = rec
+        let sequence_rec = rec
             .sequence()
             .get(..)
             .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
-        /*
-        let prob_dup = self.seq_bloom.query(sequence);
-        if prob_dup {
-        */
-        match self.seq_hs.entry(sequence.to_owned()) {
+        let sequence_hash = xxh3_128_with_seed(sequence_rec, 271828);
+
+        match self.seq_hs.entry(sequence_hash) {
             // if we have already seen this key then add this to the list of collisions
             Entry::Occupied(e) => {
                 self.collisions
@@ -177,16 +175,21 @@ impl SeqDedup {
                 true
             }
         }
-        /*
-        } else {
-            self.seq_bloom.insert(sequence);
-            true
-        }
-        */
     }
 
     fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
-        let dupfile = std::fs::File::create(out_dir.as_ref().join("duplicate_entries.tsv"))?;
+        let dupfile = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(out_dir.as_ref().join("duplicate_entries.tsv"))
+        .with_context(|| {
+            format!(
+                "Could not open the output file {:?}",
+                out_dir.as_ref().join("duplicate_entries.tsv").as_os_str()
+            )
+        })?;
+
         let mut dup_writer = BufWriter::new(dupfile);
 
         // sort so all of the values with the same

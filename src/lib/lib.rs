@@ -9,6 +9,7 @@ use serde_json::json;
 use std::collections::{hash_map::Entry, HashMap};
 use std::io::{BufWriter, Write};
 use std::ops::Add;
+use std::ops::Not;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -144,6 +145,8 @@ type HashType = u128;
 struct SeqDedup {
     seq_hs: HashMap<HashType, String>,
     collisions: Vec<(String, String)>,
+    num_seen: usize,
+    num_dup: usize,
 }
 
 impl SeqDedup {
@@ -151,6 +154,8 @@ impl SeqDedup {
         Self {
             seq_hs: HashMap::<HashType, String>::new(),
             collisions: vec![],
+            num_seen: 0,
+            num_dup: 0,
         }
     }
 
@@ -160,12 +165,14 @@ impl SeqDedup {
             .get(..)
             .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
         let sequence_hash = xxh3_128_with_seed(sequence_rec, 271828);
+        self.num_seen += 1;
 
         match self.seq_hs.entry(sequence_hash) {
             // if we have already seen this key then add this to the list of collisions
             Entry::Occupied(e) => {
                 self.collisions
                     .push((e.get().to_owned(), rec.name().to_owned()));
+                self.num_dup += 1;
                 false
             }
             // otherwise, associate this sequence with the given name, and write the
@@ -177,17 +184,31 @@ impl SeqDedup {
         }
     }
 
+    fn get_duplicate_ids(&self) -> Vec<String> {
+        self.collisions.iter().map(|x| x.1.clone()).collect()
+    }
+
     fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
+        let dup_path = out_dir.as_ref().join("duplicate_entries.tsv");
+
+        info!(
+            "Observed {} total sequences during reference generation, of which {} \
+              were exact sequence duplicates of some other sequence.",
+            self.num_seen, self.num_dup
+        );
+        info!(
+            "Duplicate sequences will not be written to the reference fasta file, \
+              or the t2g / t2g_3col file, but they are listed in {:?}.",
+            dup_path.as_os_str()
+        );
+
         let dupfile = std::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
             .create(true)
-            .open(out_dir.as_ref().join("duplicate_entries.tsv"))
+            .open(dup_path.clone())
             .with_context(|| {
-                format!(
-                    "Could not open the output file {:?}",
-                    out_dir.as_ref().join("duplicate_entries.tsv").as_os_str()
-                )
+                format!("Could not open the output file {:?}", dup_path.as_os_str())
             })?;
 
         let mut dup_writer = BufWriter::new(dupfile);
@@ -681,6 +702,14 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     // Till this point, we are done with the fasta file
     // we need to write the t2g and gene_id_to_name files
+
+    // if we are removing duplicates, remove them from t2g here
+    if dedup_seqs {
+        let column = t2g_map.column("t2g_tx_id")?;
+        let dups = sd.get_duplicate_ids();
+        let mask = column.is_in(&Series::new("values", dups))?;
+        t2g_map = t2g_map.filter(&mask.not())?;
+    }
 
     let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)

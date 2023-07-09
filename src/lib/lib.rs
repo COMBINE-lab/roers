@@ -179,16 +179,16 @@ impl SeqDedup {
 
     fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
         let dupfile = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(out_dir.as_ref().join("duplicate_entries.tsv"))
-        .with_context(|| {
-            format!(
-                "Could not open the output file {:?}",
-                out_dir.as_ref().join("duplicate_entries.tsv").as_os_str()
-            )
-        })?;
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(out_dir.as_ref().join("duplicate_entries.tsv"))
+            .with_context(|| {
+                format!(
+                    "Could not open the output file {:?}",
+                    out_dir.as_ref().join("duplicate_entries.tsv").as_os_str()
+                )
+            })?;
 
         let mut dup_writer = BufWriter::new(dupfile);
 

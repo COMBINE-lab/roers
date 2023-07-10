@@ -184,8 +184,8 @@ impl SeqDedup {
         }
     }
 
-    fn get_duplicate_ids(&self) -> Vec<String> {
-        self.collisions.iter().map(|x| x.1.clone()).collect()
+    fn get_duplicate_ids(&self) -> Vec<&str> {
+        self.collisions.iter().map(|x| x.1.as_ref()).collect()
     }
 
     fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
@@ -609,10 +609,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                 true
             };
 
-            // TODO : @DongzeHe - do we want to add the name here
-            // regardless of whether or not the sequence is a duplicate
-            // or do we only want to push the name if the sequence is
-            // written to the file.
+            // TODO : this will be removed if we are deduplicating
+            // sequences, but we push it here unconditionally. The
+            // current behavior is not wrong, but may be unnecessary.
             names.push(record.name().to_owned().clone());
 
             if write_record {
@@ -660,10 +659,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                 true
             };
 
-            // TODO : @DongzeHe - do we want to add the name here
-            // regardless of whether or not the sequence is a duplicate
-            // or do we only want to push the name if the sequence is
-            // written to the file.
+            // TODO : this will be removed if we are deduplicating
+            // sequences, but we push it here unconditionally. The
+            // current behavior is not wrong, but may be unnecessary.
             names.push(record.name().to_owned().clone());
 
             if write_record {
@@ -705,9 +703,19 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     // if we are removing duplicates, remove them from t2g here
     if dedup_seqs {
+        // the column with the keys corresponding to the
+        // sequences we've written to the output reference
+        // fasta file.
         let column = t2g_map.column("t2g_tx_id")?;
+        // get the list of duplicated sequences we have
+        // collected so far
         let dups = sd.get_duplicate_ids();
+        // mask out the t2g rows that are keyed by the duplicates
+        // and then *negate* this mask (since we wish to keep everything
+        // that is *not* a duplicate).
         let mask = column.is_in(&Series::new("values", dups))?;
+        // replace the t2g_map dataframe with the one that has the
+        // duplicate mappings removed.
         t2g_map = t2g_map.filter(&mask.not())?;
     }
 

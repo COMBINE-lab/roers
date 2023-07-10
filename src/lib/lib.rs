@@ -1,15 +1,19 @@
 use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
+use itertools::Itertools;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{hash_map::Entry, HashMap};
+use std::io::{BufWriter, Write};
 use std::ops::Add;
-use std::path::PathBuf;
+use std::ops::Not;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+use xxhash_rust::xxh3::xxh3_128_with_seed;
 
 //#[global_allocator]
 //static PEAK_ALLOC: PeakAlloc = PeakAlloc;
@@ -136,6 +140,95 @@ pub struct AugRefOpts {
     pub gff3: bool,
 }
 
+type HashType = u128;
+
+struct SeqDedup {
+    seq_hs: HashMap<HashType, String>,
+    collisions: Vec<(String, String)>,
+    num_seen: usize,
+    num_dup: usize,
+}
+
+impl SeqDedup {
+    fn new() -> Self {
+        Self {
+            seq_hs: HashMap::<HashType, String>::new(),
+            collisions: vec![],
+            num_seen: 0,
+            num_dup: 0,
+        }
+    }
+
+    fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
+        let sequence_rec = rec
+            .sequence()
+            .get(..)
+            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
+        let sequence_hash = xxh3_128_with_seed(sequence_rec, 271828);
+        self.num_seen += 1;
+
+        match self.seq_hs.entry(sequence_hash) {
+            // if we have already seen this key then add this to the list of collisions
+            Entry::Occupied(e) => {
+                self.collisions
+                    .push((e.get().to_owned(), rec.name().to_owned()));
+                self.num_dup += 1;
+                false
+            }
+            // otherwise, associate this sequence with the given name, and write the
+            // sequence to file
+            Entry::Vacant(ve) => {
+                ve.insert(rec.name().to_owned());
+                true
+            }
+        }
+    }
+
+    fn get_duplicate_ids(&self) -> Vec<&str> {
+        self.collisions.iter().map(|x| x.1.as_ref()).collect()
+    }
+
+    fn write_duplicate_info<P: AsRef<Path>>(&mut self, out_dir: P) -> anyhow::Result<()> {
+        let dup_path = out_dir.as_ref().join("duplicate_entries.tsv");
+
+        info!(
+            "Observed {} total sequences during reference generation, of which {} \
+              were exact sequence duplicates of some other sequence.",
+            self.num_seen, self.num_dup
+        );
+        info!(
+            "Duplicate sequences will not be written to the reference fasta file, \
+              or the t2g / t2g_3col file, but they are listed in {:?}.",
+            dup_path.as_os_str()
+        );
+
+        let dupfile = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(dup_path.clone())
+            .with_context(|| {
+                format!("Could not open the output file {:?}", dup_path.as_os_str())
+            })?;
+
+        let mut dup_writer = BufWriter::new(dupfile);
+
+        // sort so all of the values with the same
+        // retained key are adjacent
+        self.collisions.sort();
+
+        writeln!(dup_writer, "RetainedRef\tDuplicateRef")?;
+
+        for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
+            for d in group {
+                writeln!(dup_writer, "{}\t{}", key, d.1)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::uninlined_format_args)]
 pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // clean this up
     let genome_path: PathBuf = aug_ref_opts.genome;
@@ -190,8 +283,28 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     let flank_length = read_length - flank_trim_length;
     // let filename_prefix = format!("{}_fl{}.fa", filename_prefix, flank_length);
     let filename_prefix = format!("{}.fa", filename_prefix);
-    let out_fa = out_dir.join(&filename_prefix);
-    std::fs::File::create(&out_fa)?;
+    let out_fa_path = out_dir.join(&filename_prefix);
+
+    // we create the writer
+    // we will not append because this should be the start of the file
+    let fa_out_file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&out_fa_path)
+        .with_context(|| {
+            format!(
+                "Could not open the output file {:?}",
+                out_fa_path.as_os_str()
+            )
+        })?;
+
+    let mut sd = SeqDedup::new();
+    let mut sd_callback = if dedup_seqs {
+        Some(|r: &noodles::fasta::Record| -> bool { sd.callback(r) })
+    } else {
+        None
+    };
 
     // 1. we read the gtf/gff3 file as grangers. This will make sure that the eight fields are there.
     let start = Instant::now();
@@ -309,24 +422,19 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         t2g_map.with_column(Series::new("splice_status", vec!["S"; t2g_map.height()]))?;
     }
 
-    // Next, we write the transcript sequences to file if asked, otherwise create a file
-    // we need to know if we want to deduplicate sequences
-    let mut spliced_recs: Vec<noodles::fasta::Record> = Vec::new();
+    // Next, we write the transcript sequences to file if asked
     if !no_transcript {
-        if dedup_seqs {
-            spliced_recs.extend(
-                exon_gr
-                    .get_transcript_sequences(&genome_path, None, true)?
-                    .into_iter(),
-            );
-        } else {
-            // Next, we write the transcript seuqences
-            exon_gr.write_transcript_sequences(&genome_path, &out_fa, None, true, true)?;
-        }
+        // Next, we write the transcript seuqences
+        exon_gr.write_transcript_sequences_with_filter(
+            &genome_path,
+            &fa_out_file,
+            None,
+            true,
+            &mut sd_callback,
+        )?;
     }
 
     // Next, we write the augmented sequences
-    let mut unspliced_recs: Vec<Option<noodles::fasta::Record>> = Vec::new();
     if let Some(aug_type) = &aug_type {
         for seq_typ in aug_type {
             match seq_typ {
@@ -371,29 +479,17 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             concat_str([col(gene_id), col("intron_number")], "-I")
                                 .alias("t2g_tx_id"),
                         )
+                        .sort(gene_id, Default::default())
                         .collect()?;
 
-                    if dedup_seqs {
-                        unspliced_recs.extend(
-                            intron_gr
-                                .get_sequences(
-                                    &genome_path,
-                                    false,
-                                    Some("t2g_tx_id"),
-                                    options::OOBOption::Truncate,
-                                )?
-                                .into_iter(),
-                        );
-                    } else {
-                        intron_gr.write_sequences(
-                            &genome_path,
-                            &out_fa,
-                            false,
-                            Some("t2g_tx_id"),
-                            options::OOBOption::Truncate,
-                            true,
-                        )?;
-                    }
+                    intron_gr.write_sequences_with_filter(
+                        &genome_path,
+                        &fa_out_file,
+                        false,
+                        Some("t2g_tx_id"),
+                        options::OOBOption::Truncate,
+                        &mut sd_callback,
+                    )?;
 
                     // we need to update the t2g mapping for introns
                     let mut intron_t2g = intron_gr.df().select(["t2g_tx_id", gene_id])?.unique(
@@ -419,35 +515,21 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     gene_gr.df = gene_gr
                         .df
                         .lazy()
+                        .sort(gene_id, Default::default())
                         .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
                         .collect()?;
 
                     // say something
                     info!("Proceed {} gene body records", gene_gr.df().height(),);
 
-                    // if dedup_seqs is true, we want to store the records in a vector
-                    // otherwise, we write them to the file directly.
-                    if dedup_seqs {
-                        unspliced_recs.extend(
-                            gene_gr
-                                .get_sequences(
-                                    &genome_path,
-                                    false,
-                                    Some("t2g_tx_id"),
-                                    options::OOBOption::Truncate,
-                                )?
-                                .into_iter(),
-                        );
-                    } else {
-                        gene_gr.write_sequences(
-                            &genome_path,
-                            &out_fa,
-                            false,
-                            Some("t2g_tx_id"),
-                            options::OOBOption::Truncate,
-                            true,
-                        )?;
-                    }
+                    gene_gr.write_sequences_with_filter(
+                        &genome_path,
+                        &fa_out_file,
+                        false,
+                        Some("t2g_tx_id"),
+                        options::OOBOption::Truncate,
+                        &mut sd_callback,
+                    )?;
 
                     // we need to update the t2g mapping for genes
                     let mut gene_t2g = gene_gr.df().select(["t2g_tx_id", gene_id])?.unique(
@@ -477,29 +559,14 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // say something
                     info!("Proceed {} transcript body records", tx_gr.df().height(),);
 
-                    // if dedup_seqs, we store the records in a vector
-                    // otherwise, we write them to the file directly
-                    if dedup_seqs {
-                        unspliced_recs.extend(
-                            tx_gr
-                                .get_sequences(
-                                    &genome_path,
-                                    false,
-                                    Some(gene_id),
-                                    options::OOBOption::Truncate,
-                                )?
-                                .into_iter(),
-                        );
-                    } else {
-                        tx_gr.write_sequences(
-                            &genome_path,
-                            &out_fa,
-                            false,
-                            Some(gene_id),
-                            options::OOBOption::Truncate,
-                            true,
-                        )?;
-                    }
+                    tx_gr.write_sequences_with_filter(
+                        &genome_path,
+                        &fa_out_file,
+                        false,
+                        Some(gene_id),
+                        options::OOBOption::Truncate,
+                        &mut sd_callback,
+                    )?;
 
                     // we need to update the t2g mapping for genes
                     let mut tx_t2g = tx_gr.df().select(["t2g_tx_id", gene_id])?.unique(
@@ -528,25 +595,26 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             .map(noodles::fasta::Reader::new)?;
 
         // we crate the writer, and write if not dedup
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
+        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
 
         // if dedup, we push the records into the seq vector
         // otherwise, we write the records to the output file
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+
+            let write_record = if let Some(ref mut dup_filt) = sd_callback {
+                dup_filt(&record)
+            } else {
+                true
+            };
+
+            // TODO : this will be removed if we are deduplicating
+            // sequences, but we push it here unconditionally. The
+            // current behavior is not wrong, but may be unnecessary.
             names.push(record.name().to_owned().clone());
 
-            if dedup_seqs {
-                spliced_recs.push(record);
-            } else {
+            if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
@@ -579,23 +647,24 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             .map(std::io::BufReader::new)
             .map(noodles::fasta::Reader::new)?;
 
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
+        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
 
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+
+            let write_record = if let Some(ref mut dup_filt) = sd_callback {
+                dup_filt(&record)
+            } else {
+                true
+            };
+
+            // TODO : this will be removed if we are deduplicating
+            // sequences, but we push it here unconditionally. The
+            // current behavior is not wrong, but may be unnecessary.
             names.push(record.name().to_owned().clone());
 
-            if dedup_seqs {
-                unspliced_recs.push(Some(record));
-            } else {
+            if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
@@ -622,71 +691,33 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         gene_id_to_name.extend(&df!(gene_id => &names, gene_name => &names)?)?;
     };
 
-    // at this point, if we don't do deduplication, the fasta file should be ready
-    // if we do, we need to check if each seq is the unique one before write to the file
+    // at this point, the fasta file should be ready
+    // if we are doing deduplication, we need to write out
+    // the duplicate entry information
     if dedup_seqs {
-        // we create the writer
-        // we will not append because this should be the start of the file
-        let mut writer = noodles::fasta::Writer::new(
-            std::fs::OpenOptions::new()
-                .append(false)
-                .open(&out_fa)
-                .with_context(|| {
-                    format!("Could not open the output file {:?}", out_fa.as_os_str())
-                })?,
-        );
-
-        // we need a hashset to check if we have seen a sequence
-        let mut seq_hs = HashSet::new();
-        // we process spliced records first
-        if !spliced_recs.is_empty() {
-            // for each record, if the sequence is not in the hashset, we write it to the file
-            for r in spliced_recs.iter() {
-                if seq_hs.insert(
-                    r.sequence()
-                        .get(..)
-                        .with_context(|| {
-                            format!("Failed getting sequence for record {}", r.name())
-                        })?
-                        .to_owned(),
-                ) {
-                    writer.write_record(r).with_context(|| {
-                        format!(
-                            "Could not write the sequence of spliced transcript {} to the output file",
-                            r.name()
-                        )
-                    })?;
-                }
-            }
-        }
-
-        // we process unspliced records first
-        if !unspliced_recs.is_empty() {
-            // for each record, if the sequence is not in the hashset, we write it to the file
-            for r in unspliced_recs.iter().flatten() {
-                // as we might get empty sequence (oob)
-                // we need to check if the record is empty
-                if seq_hs.insert(
-                    r.sequence()
-                        .get(..)
-                        .with_context(|| {
-                            format!("Failed getting sequence for record {}", r.name())
-                        })?
-                        .to_owned(),
-                ) {
-                    writer.write_record(r).with_context(|| {
-                        format!(
-                            "Could not write the sequence of spliced transcript {} to the output file",
-                            r.name()
-                        )
-                    })?;
-                }
-            }
-        }
-    } // if dedup_seq
+        sd.write_duplicate_info(&out_dir)?;
+    }
 
     // Till this point, we are done with the fasta file
     // we need to write the t2g and gene_id_to_name files
+
+    // if we are removing duplicates, remove them from t2g here
+    if dedup_seqs {
+        // the column with the keys corresponding to the
+        // sequences we've written to the output reference
+        // fasta file.
+        let column = t2g_map.column("t2g_tx_id")?;
+        // get the list of duplicated sequences we have
+        // collected so far
+        let dups = sd.get_duplicate_ids();
+        // mask out the t2g rows that are keyed by the duplicates
+        // and then *negate* this mask (since we wish to keep everything
+        // that is *not* a duplicate).
+        let mask = column.is_in(&Series::new("values", dups))?;
+        // replace the t2g_map dataframe with the one that has the
+        // duplicate mappings removed.
+        t2g_map = t2g_map.filter(&mask.not())?;
+    }
 
     let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)
@@ -707,7 +738,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     let index_info = json!({
         "command" : "roers makeref",
         "roers_version" : v,
-        "output_fasta": out_fa,
+        "output_fasta": out_fa_path,
         "output_t2g": out_t2g_name,
         "output_gid2name": out_gid2name,
         "args" : {

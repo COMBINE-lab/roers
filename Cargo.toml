@@ -39,12 +39,15 @@ path = "src/lib/lib.rs"
 
 [dependencies]
 anyhow = "1.0.71"
-clap = { version = "4.3.3", features = ["derive", "wrap_help","cargo"] }
-grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.1.4" }
+clap = { version = "4.3.11", features = ["derive", "wrap_help","cargo"] }
+grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.2.1" }
 polars = { version = "0.30", features = ["lazy","dataframe_arithmetic","sort_multiple", "checked_arithmetic","rows","dtype-struct", "dtype-categorical", "list_eval","concat_str", "strings"]}
 peak_alloc = "0.2.0"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-noodles = { version = "0.41.0", features = ["fasta"] }
-serde = {version = "1.0.164", features = ["derive"]}
-serde_json = "1.0.96"
+noodles = { version = "0.44.0", features = ["fasta"] }
+serde = {version = "1.0.170", features = ["derive"]}
+serde_json = "1.0.100"
+itertools = "0.11.0"
+oomfi = "0.1.2"
+xxhash-rust = { version = "0.8.6", features = ["xxh3"] }

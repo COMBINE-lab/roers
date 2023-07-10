@@ -40,7 +40,7 @@ path = "src/lib/lib.rs"
 [dependencies]
 anyhow = "1.0.71"
 clap = { version = "4.3.11", features = ["derive", "wrap_help","cargo"] }
-grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.2.0" }
+grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.2.1" }
 polars = { version = "0.30", features = ["lazy","dataframe_arithmetic","sort_multiple", "checked_arithmetic","rows","dtype-struct", "dtype-categorical", "list_eval","concat_str", "strings"]}
 peak_alloc = "0.2.0"
 tracing = "0.1.37"

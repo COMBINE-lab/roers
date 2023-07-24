@@ -325,8 +325,8 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // this will make sure that each exon has a valid transcript ID, and the exon numbers are valid
     let mut exon_gr = gr.exons(None, true)?;
 
-    let mut fc = exon_gr.field_columns().clone();
-    let df = exon_gr.df_mut();
+    let fc = exon_gr.field_columns();
+    let df = exon_gr.df();
 
     // we then make sure that the gene_id and gene_name fields are not both missing
     if fc.gene_id().is_none() && fc.gene_name().is_none() {
@@ -343,9 +343,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
         gene_id.rename("gene_id");
         // we update the field_columns
-        fc.update("gene_id", "gene_id")?;
-        // push to the df·
-        df.with_column(gene_id)?;
+        // fc.update("gene_id", "gene_id")?;
+        // push to the df
+        exon_gr.update_column(gene_id, Some("gene_id"))?;
+        // df.with_column(gene_id)?;
     } else if fc.gene_name().is_none() {
         warn!(
             "The input {} file does not have a valid gene_name field. Roers will use gene_id as gene_name.",
@@ -354,13 +355,14 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // we get gene id and rename it to gene_name
         let mut gene_name = df.column(fc.gene_id().unwrap())?.clone();
         gene_name.rename("gene_name");
-        fc.update("gene_name", "gene_name")?;
+        // fc.update("gene_name", "gene_name")?;
         // push to the df
-        df.with_column(gene_name)?;
+        exon_gr.update_column(gene_name, Some("gene_name"))?;
+        // df.with_column(gene_name)?;
     }
 
     // TODO: Getting the string and then making the &str are annoying, maybe we should have a better way to do this
-    exon_gr.field_columns = fc;
+    // exon_gr.field_columns = fc;
     let gene_id_s = exon_gr.get_column_name("gene_id", false)?;
     let gene_id = gene_id_s.as_str();
     let gene_name_s = exon_gr.get_column_name("gene_name", false)?;
@@ -371,8 +373,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // Next, we fill the missing gene_id and gene_name fields
     if exon_gr.any_nulls(&[gene_id, gene_name], false, false)? {
         warn!("Found missing gene_id and/or gene_name; Imputing. If both missing, will impute using transcript_id; Otherwise, will impute using the existing one.");
-        exon_gr.df = exon_gr
-            .df
+        let new_df = exon_gr
+            .df()
+            .clone()
             .lazy()
             .with_columns([
                 when(col(gene_id).is_null())
@@ -393,6 +396,8 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     .alias(gene_name),
             ])
             .collect()?;
+
+            exon_gr.update_df(new_df)?;
     }
 
     // to this point, we have a valid exon df to work with.

@@ -373,9 +373,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     // Next, we fill the missing gene_id and gene_name fields
     if exon_gr.any_nulls(&[gene_id, gene_name], false, false)? {
         warn!("Found missing gene_id and/or gene_name; Imputing. If both missing, will impute using transcript_id; Otherwise, will impute using the existing one.");
-        let new_df = exon_gr
+        let three_col_df = exon_gr
             .df()
-            .clone()
+            .select([transcript_id, gene_id, gene_name])?
             .lazy()
             .with_columns([
                 when(col(gene_id).is_null())
@@ -397,7 +397,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             ])
             .collect()?;
 
-            exon_gr.update_df(new_df)?;
+        // we update the corresponding columns
+        exon_gr.update_column(three_col_df.column(gene_id)?.to_owned(), None)?;
+        exon_gr.update_column(three_col_df.column(gene_name)?.to_owned(), None)?;
     }
 
     // to this point, we have a valid exon df to work with.

@@ -720,8 +720,8 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // mask out the t2g rows that are keyed by the duplicates
         // and then *negate* this mask (since we wish to keep everything
         // that is *not* a duplicate).
-        let mask = is_in(column, &Series::new("values", dups))?;
-
+        let mask = is_in(&column, &Series::new("values", dups))?;
+        let mask = column.is_in(&Series::new("values", dups))?;
         // replace the t2g_map dataframe with the one that has the
         // duplicate mappings removed.
         t2g_map = t2g_map.filter(&mask.not())?;
@@ -730,13 +730,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
     let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
-        .with_separator(b'\t')
+        .with_delimiter(b'\t')
         .finish(&mut t2g_map)?;
 
     let mut file = std::fs::File::create(&out_gid2name)?;
     CsvWriter::new(&mut file)
         .has_header(false)
-        .with_separator(b'\t')
+        .with_delimiter(b'\t')
         .finish(&mut gene_id_to_name)?;
 
     let info_file = out_dir.join("roers_make-ref.json");

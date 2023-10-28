@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/COMBINE-lab/roers/compare/v0.2.0...v0.3.0) (2023-10-28)
+
+
+### Features
+
+* bump all deps ([7df63f4](https://github.com/COMBINE-lab/roers/commit/7df63f4a5d62a94be538fdd7a88724c7d6877eb4))
+* bump grangers dep ([442c7c4](https://github.com/COMBINE-lab/roers/commit/442c7c4294ceb5debc6ce5a14aad8b6b5a517fa5))
+* bump grangers dep ([c539cb5](https://github.com/COMBINE-lab/roers/commit/c539cb57d4ad90e9c74165602c57f710e1c59a2c))
+
+
+### Bug Fixes
+
+* avoid operations on df and field_columns directly ([1fe4add](https://github.com/COMBINE-lab/roers/commit/1fe4addd41c70326243b0e5ba3312fdf57203eab))
+
 ## [0.2.0](https://github.com/COMBINE-lab/roers/compare/v0.1.0...v0.2.0) (2023-07-10)
 
 

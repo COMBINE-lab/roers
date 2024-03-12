@@ -160,10 +160,11 @@ impl SeqDedup {
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
+        let record_name = std::str::from_utf8(rec.name()).expect(format!("Failed getting name for record {:?}", rec).as_str());
         let sequence_rec = rec
             .sequence()
             .get(..)
-            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
+            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", record_name));
         let sequence_hash = xxh3_128_with_seed(sequence_rec, 271828);
         self.num_seen += 1;
 
@@ -171,14 +172,14 @@ impl SeqDedup {
             // if we have already seen this key then add this to the list of collisions
             Entry::Occupied(e) => {
                 self.collisions
-                    .push((e.get().to_owned(), rec.name().to_owned()));
+                    .push((e.get().to_owned(), record_name.to_owned()));
                 self.num_dup += 1;
                 false
             }
             // otherwise, associate this sequence with the given name, and write the
             // sequence to file
             Entry::Vacant(ve) => {
-                ve.insert(rec.name().to_owned());
+                ve.insert(record_name.to_owned());
                 true
             }
         }
@@ -483,7 +484,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         .df
                         .lazy()
                         .with_column(
-                            concat_str([col(gene_id), col("intron_number")], "-I")
+                            concat_str([col(gene_id), col("intron_number")], "-I", false)
                                 .alias("t2g_tx_id"),
                         )
                         .sort(gene_id, Default::default())
@@ -609,6 +610,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+            let record_name = std::str::from_utf8(record.name())?;
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
@@ -619,13 +621,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             // TODO : this will be removed if we are deduplicating
             // sequences, but we push it here unconditionally. The
             // current behavior is not wrong, but may be unnecessary.
-            names.push(record.name().to_owned().clone());
+            names.push(record_name.to_owned().clone());
 
             if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
+                        record_name
                     )
                 })?;
             }
@@ -659,6 +661,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+            let record_name = std::str::from_utf8(record.name())?;
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
@@ -669,13 +672,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             // TODO : this will be removed if we are deduplicating
             // sequences, but we push it here unconditionally. The
             // current behavior is not wrong, but may be unnecessary.
-            names.push(record.name().to_owned().clone());
+            names.push(record_name.to_owned().clone());
 
             if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
+                        record_name
                     )
                 })?;
             }
@@ -729,13 +732,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)
-        .has_header(false)
+        .include_header(false)
         .with_separator(b'\t')
         .finish(&mut t2g_map)?;
 
     let mut file = std::fs::File::create(&out_gid2name)?;
     CsvWriter::new(&mut file)
-        .has_header(false)
+        .include_header(false)
         .with_separator(b'\t')
         .finish(&mut gene_id_to_name)?;
 

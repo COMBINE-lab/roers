@@ -2,6 +2,7 @@ use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
 use itertools::Itertools;
+use noodles::fasta;
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
@@ -160,7 +161,8 @@ impl SeqDedup {
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
-        let record_name = std::str::from_utf8(rec.name()).expect(format!("Failed getting name for record {:?}", rec).as_str());
+        let record_name = std::str::from_utf8(rec.name())
+            .unwrap_or_else(|_| panic!("Failed getting name for record {:?}", rec));
         let sequence_rec = rec
             .sequence()
             .get(..)
@@ -302,7 +304,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     let mut sd = SeqDedup::new();
     let mut sd_callback = if dedup_seqs {
-        Some(|r: &noodles::fasta::Record| -> bool { sd.callback(r) })
+        Some(|r: &fasta::Record| -> bool { sd.callback(r) })
     } else {
         None
     };
@@ -600,10 +602,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // create extra file reader
         let mut reader = std::fs::File::open(path)
             .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
+            .map(fasta::Reader::new)?;
 
         // we crate the writer, and write if not dedup
-        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
+        let mut writer = fasta::Writer::new(&fa_out_file);
 
         // if dedup, we push the records into the seq vector
         // otherwise, we write the records to the output file
@@ -654,9 +656,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // create extra file reader
         let mut reader = std::fs::File::open(path)
             .map(std::io::BufReader::new)
-            .map(noodles::fasta::Reader::new)?;
+            .map(fasta::Reader::new)?;
 
-        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
+        let mut writer = fasta::Writer::new(&fa_out_file);
 
         let mut names = Vec::new();
         for result in reader.records() {

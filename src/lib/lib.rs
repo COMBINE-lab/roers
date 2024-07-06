@@ -160,7 +160,8 @@ impl SeqDedup {
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
-        let record_name = std::str::from_utf8(rec.name()).expect(format!("Failed getting name for record {:?}", rec).as_str());
+        let record_name = std::str::from_utf8(rec.name())
+            .unwrap_or_else(|_| panic!("Failed getting name for record {:?}", rec));
         let sequence_rec = rec
             .sequence()
             .get(..)
@@ -220,7 +221,7 @@ impl SeqDedup {
 
         writeln!(dup_writer, "RetainedRef\tDuplicateRef")?;
 
-        for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
+        for (key, group) in &self.collisions.iter().chunk_by(|&x| &x.0) {
             for d in group {
                 writeln!(dup_writer, "{}\t{}", key, d.1)?;
             }
@@ -324,7 +325,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     // we get the exon df and validate it
     // this will make sure that each exon has a valid transcript ID, and the exon numbers are valid
-    let mut exon_gr = gr.exons(None, true)?;
+    let mut exon_gr = gr.exons(None, false)?;
 
     let fc = exon_gr.field_columns();
     let df = exon_gr.df();
@@ -437,7 +438,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             &genome_path,
             &fa_out_file,
             None,
-            true,
+            false,
             &mut sd_callback,
         )?;
     }
@@ -448,7 +449,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             match seq_typ {
                 AugType::Intronic => {
                     // Then, we get the introns
-                    let mut intron_gr = exon_gr.introns(None, None, None, true)?;
+                    let mut intron_gr = exon_gr.introns(None, None, None, false)?;
 
                     info!("Processing {} intronic records", intron_gr.df().height(),);
 
@@ -456,11 +457,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     // if no_flanking_merge is true, we merge first, then extend
                     if no_flanking_merge {
                         // Then, we merge the overlapping introns
+                        // We use multithreads as built-in. Not sure if we want to expose this to the user
                         intron_gr = intron_gr.merge(
                             &[intron_gr.get_column_name(gene_id, false)?],
                             false,
                             None,
                             None,
+                            true,
                         )?;
                     }
 
@@ -475,11 +478,12 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             false,
                             None,
                             None,
+                            true,
                         )?;
                     }
 
                     // Then, we give a unique id to each intron
-                    intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), true)?;
+                    intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), false)?;
                     intron_gr.df = intron_gr
                         .df
                         .lazy()
@@ -487,7 +491,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             concat_str([col(gene_id), col("intron_number")], "-I", false)
                                 .alias("t2g_tx_id"),
                         )
-                        .sort(gene_id, Default::default())
+                        .sort([gene_id], Default::default())
                         .collect()?;
 
                     intron_gr.write_sequences_with_filter(
@@ -517,13 +521,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                 }
                 AugType::GeneBody => {
                     // first we get the range (gene body) of each gene
-                    let mut gene_gr = exon_gr.genes(None, true)?;
+                    let mut gene_gr = exon_gr.genes(None, false)?;
 
                     // we append a -G to each sequence here to mark that they are gene-body seuqences
                     gene_gr.df = gene_gr
                         .df
                         .lazy()
-                        .sort(gene_id, Default::default())
+                        .sort([gene_id], Default::default())
                         .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
                         .collect()?;
 
@@ -555,7 +559,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                 }
                 AugType::TranscriptBody => {
                     // we get the range (transcript body) of each transcript
-                    let mut tx_gr = exon_gr.transcripts(None, true)?;
+                    let mut tx_gr = exon_gr.transcripts(None, false)?;
 
                     // Then we append a -T to mark the sequence as transcript body
                     tx_gr.df = tx_gr

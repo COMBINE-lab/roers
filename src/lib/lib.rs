@@ -463,7 +463,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             false,
                             None,
                             None,
-                            true,
+                            false,
                         )?;
                     }
 
@@ -478,7 +478,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             false,
                             None,
                             None,
-                            true,
+                            false,
                         )?;
                     }
 

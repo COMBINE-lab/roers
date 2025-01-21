@@ -38,18 +38,16 @@ name = "roers"
 path = "src/lib/lib.rs"
 
 [dependencies]
-anyhow = "1.0.75"
-# https://github.com/pola-rs/polars/issues/19157
-hashbrown = { version = "0.14.5", features = ["raw"] }
-clap = { version = "4.4.7", features = ["derive", "wrap_help","cargo"] }
-grangers = { git = "https://github.com/an-altosian/grangers.git", branch="add_rustdoc", version = "0.4.0" }
+anyhow = "1.0.81"
+clap = { version = "4.5.3", features = ["derive", "wrap_help","cargo"] }
+grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.4.0" }
 polars = { version = "0.45.1", features = ["lazy","dataframe_arithmetic", "checked_arithmetic","rows","dtype-struct", "dtype-categorical", "list_eval","concat_str", "strings"]}
-peak_alloc = "0.2.0"
+peak_alloc = "0.2.1"
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 noodles = { version = "0.87.0", features = ["gtf","gff","fasta", "core"] }
-serde = {version = "1.0.190", features = ["derive"]}
-serde_json = "1.0.107"
-itertools = "0.14.0"
+serde = {version = "1.0.197", features = ["derive"]}
+serde_json = "1.0.114"
+itertools = "0.14.1"
 oomfi = "0.1.2"
-xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.10", features = ["xxh3"] }

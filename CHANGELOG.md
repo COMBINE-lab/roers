@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/COMBINE-lab/roers/compare/v0.3.0...v0.4.0) (2025-01-24)
+
+
+### Features
+
+* bump deps and grangers version ([1cd36df](https://github.com/COMBINE-lab/roers/commit/1cd36dfe2e8f24dede9074b2315dbed11ec75be3))
+* bump to match upstream grangers version ([c9bcb67](https://github.com/COMBINE-lab/roers/commit/c9bcb677c54493d459462d027b382aa90048fafc))
+
 ## [0.3.0](https://github.com/COMBINE-lab/roers/compare/v0.2.0...v0.3.0) (2023-10-28)
 
 

@@ -15,9 +15,6 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use xxhash_rust::xxh3::xxh3_128_with_seed;
 
-//#[global_allocator]
-//static PEAK_ALLOC: PeakAlloc = PeakAlloc;
-
 use clap::Args;
 
 /// The type of sequences we might include in the output reference FASTA file
@@ -160,10 +157,12 @@ impl SeqDedup {
     }
 
     fn callback(&mut self, rec: &noodles::fasta::Record) -> bool {
+        let record_name = std::str::from_utf8(rec.name())
+            .unwrap_or_else(|_| panic!("Failed getting name for record {:?}", rec));
         let sequence_rec = rec
             .sequence()
             .get(..)
-            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", rec.name()));
+            .unwrap_or_else(|| panic!("Failed getting sequence for record {}", record_name));
         let sequence_hash = xxh3_128_with_seed(sequence_rec, 271828);
         self.num_seen += 1;
 
@@ -171,14 +170,14 @@ impl SeqDedup {
             // if we have already seen this key then add this to the list of collisions
             Entry::Occupied(e) => {
                 self.collisions
-                    .push((e.get().to_owned(), rec.name().to_owned()));
+                    .push((e.get().to_owned(), record_name.to_owned()));
                 self.num_dup += 1;
                 false
             }
             // otherwise, associate this sequence with the given name, and write the
             // sequence to file
             Entry::Vacant(ve) => {
-                ve.insert(rec.name().to_owned());
+                ve.insert(record_name.to_owned());
                 true
             }
         }
@@ -219,7 +218,7 @@ impl SeqDedup {
 
         writeln!(dup_writer, "RetainedRef\tDuplicateRef")?;
 
-        for (key, group) in &self.collisions.iter().group_by(|&x| &x.0) {
+        for (key, group) in &self.collisions.iter().chunk_by(|&x| &x.0) {
             for d in group {
                 writeln!(dup_writer, "{}\t{}", key, d.1)?;
             }
@@ -323,7 +322,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     // we get the exon df and validate it
     // this will make sure that each exon has a valid transcript ID, and the exon numbers are valid
-    let mut exon_gr = gr.exons(None, true)?;
+    let mut exon_gr = gr.exons(None, false)?;
 
     let fc = exon_gr.field_columns();
     let df = exon_gr.df();
@@ -341,7 +340,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         );
         // we get gene name and rename it to gene_id
         let mut gene_id = df.column(fc.gene_name().unwrap())?.clone();
-        gene_id.rename("gene_id");
+        gene_id.rename("gene_id".into());
         // we update the field_columns
         // fc.update("gene_id", "gene_id")?;
         // push to the df
@@ -354,7 +353,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         );
         // we get gene id and rename it to gene_name
         let mut gene_name = df.column(fc.gene_id().unwrap())?.clone();
-        gene_name.rename("gene_name");
+        gene_name.rename("gene_name".into());
         // fc.update("gene_name", "gene_name")?;
         // push to the df
         exon_gr.update_column(gene_name, Some("gene_name"))?;
@@ -397,36 +396,49 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             ])
             .collect()?;
 
-        // we update the corresponding columns
-        exon_gr.update_column(three_col_df.column(gene_id)?.to_owned(), None)?;
-        exon_gr.update_column(three_col_df.column(gene_name)?.to_owned(), None)?;
+        // [transcript_id, gene_id, gene_name]
+        let mut three_col_vec = three_col_df.take_columns();
+        exon_gr.update_column(
+            three_col_vec
+                .pop()
+                .with_context(|| "Could not find the gene_name column")?,
+            None,
+        )?;
+        exon_gr.update_column(
+            three_col_vec
+                .pop()
+                .with_context(|| "Could not find the gene_id column")?,
+            None,
+        )?;
     }
 
     // to this point, we have a valid exon df to work with.
     info!(
-        "Proceed {} exon records from {} transcripts",
+        "Found {} exon records from {} transcripts.",
         exon_gr.df().height(),
         exon_gr.df().column("transcript_id")?.n_unique()?
     );
 
     // Next, we get the gene id to name mapping
-    let mut gene_id_to_name =
-        exon_gr
-            .df()
-            .select([gene_id, gene_name])?
-            .unique(None, UniqueKeepStrategy::Any, None)?;
-
-    // also, the t2g mapping for spliced transcripts
-    let mut t2g_map = exon_gr.df().select([transcript_id, gene_id])?.unique(
+    let mut gene_id_to_name = exon_gr.df().select([gene_id, gene_name])?.unique_stable(
         None,
         UniqueKeepStrategy::Any,
         None,
     )?;
-    t2g_map.rename(transcript_id, "t2g_tx_id")?;
+
+    // also, the t2g mapping for spliced transcripts
+    let mut t2g_map = exon_gr
+        .df()
+        .select([transcript_id, gene_id])?
+        .unique_stable(None, UniqueKeepStrategy::Any, None)?;
+    t2g_map.rename(transcript_id, "t2g_tx_id".into())?;
 
     // if we have augmented sequences, we need three columns
     if aug_type.is_some() {
-        t2g_map.with_column(Series::new("splice_status", vec!["S"; t2g_map.height()]))?;
+        t2g_map.with_column(Column::new(
+            "splice_status".into(),
+            vec!["S"; t2g_map.height()],
+        ))?;
     }
 
     // Next, we write the transcript sequences to file if asked
@@ -436,9 +448,12 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             &genome_path,
             &fa_out_file,
             None,
-            true,
+            false,
             &mut sd_callback,
         )?;
+
+        // to this point, we have a valid exon df to work with.
+        info!("Wrote transcript sequences to output file.");
     }
 
     // Next, we write the augmented sequences
@@ -446,25 +461,32 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         for seq_typ in aug_type {
             match seq_typ {
                 AugType::Intronic => {
+                    info!("Processing intronic records.");
                     // Then, we get the introns
-                    let mut intron_gr = exon_gr.introns(None, None, None, true)?;
+                    let mut intron_gr = exon_gr.introns(None, None, None, false)?;
 
-                    info!("Processing {} intronic records", intron_gr.df().height(),);
+                    info!("Found {} intronic records.", intron_gr.df().height(),);
 
                     // no_flanking_merge decides when the order of merge and extend
                     // if no_flanking_merge is true, we merge first, then extend
                     if no_flanking_merge {
                         // Then, we merge the overlapping introns
+                        // We use multithreads as built-in. Not sure if we want to expose this to the user
                         intron_gr = intron_gr.merge(
                             &[intron_gr.get_column_name(gene_id, false)?],
                             false,
                             None,
                             None,
+                            false,
                         )?;
+
+                        info!("Merged overlapping intronic records.");
                     }
 
                     // add flanking end to both side of each intron
                     intron_gr.extend(flank_length, &options::ExtendOption::Both, false)?;
+
+                    info!("Added flanking length to intronic records.");
 
                     // if no_flanking_merge is false, we merge after extend
                     if !no_flanking_merge {
@@ -474,19 +496,22 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                             false,
                             None,
                             None,
+                            false,
                         )?;
+
+                        info!("Merged overlapping intronic records.");
                     }
 
                     // Then, we give a unique id to each intron
-                    intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), true)?;
+                    intron_gr.add_order(Some(&[gene_id]), "intron_number", Some(1), false)?;
                     intron_gr.df = intron_gr
                         .df
                         .lazy()
                         .with_column(
-                            concat_str([col(gene_id), col("intron_number")], "-I")
+                            concat_str([col(gene_id), col("intron_number")], "-I", false)
                                 .alias("t2g_tx_id"),
                         )
-                        .sort(gene_id, Default::default())
+                        .sort([gene_id], Default::default())
                         .collect()?;
 
                     intron_gr.write_sequences_with_filter(
@@ -498,16 +523,17 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                         &mut sd_callback,
                     )?;
 
+                    info!("Wrote intronic sequences to output file.");
+
                     // we need to update the t2g mapping for introns
-                    let mut intron_t2g = intron_gr.df().select(["t2g_tx_id", gene_id])?.unique(
-                        None,
-                        UniqueKeepStrategy::Any,
-                        None,
-                    )?;
+                    let mut intron_t2g = intron_gr
+                        .df()
+                        .select(["t2g_tx_id", gene_id])?
+                        .unique_stable(None, UniqueKeepStrategy::Any, None)?;
 
                     // if we are here, we need to add a column for splice_status cuz it is an augmented reference
-                    intron_t2g.with_column(Series::new(
-                        "splice_status",
+                    intron_t2g.with_column(Column::new(
+                        "splice_status".into(),
                         vec!["U"; intron_t2g.height()],
                     ))?;
 
@@ -516,13 +542,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                 }
                 AugType::GeneBody => {
                     // first we get the range (gene body) of each gene
-                    let mut gene_gr = exon_gr.genes(None, true)?;
+                    let mut gene_gr = exon_gr.genes(None, false)?;
 
                     // we append a -G to each sequence here to mark that they are gene-body seuqences
                     gene_gr.df = gene_gr
                         .df
                         .lazy()
-                        .sort(gene_id, Default::default())
+                        .sort([gene_id], Default::default())
                         .with_column(col(gene_id).add(lit("-G")).alias("t2g_tx_id"))
                         .collect()?;
 
@@ -539,22 +565,24 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     )?;
 
                     // we need to update the t2g mapping for genes
-                    let mut gene_t2g = gene_gr.df().select(["t2g_tx_id", gene_id])?.unique(
+                    let mut gene_t2g = gene_gr.df().select(["t2g_tx_id", gene_id])?.unique_stable(
                         None,
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
 
                     // add the splice status column
-                    gene_t2g
-                        .with_column(Series::new("splice_status", vec!["U"; gene_t2g.height()]))?;
+                    gene_t2g.with_column(Column::new(
+                        "splice_status".into(),
+                        vec!["U"; gene_t2g.height()],
+                    ))?;
 
                     // extend t2g_map for genes
                     t2g_map.extend(&gene_t2g)?;
                 }
                 AugType::TranscriptBody => {
                     // we get the range (transcript body) of each transcript
-                    let mut tx_gr = exon_gr.transcripts(None, true)?;
+                    let mut tx_gr = exon_gr.transcripts(None, false)?;
 
                     // Then we append a -T to mark the sequence as transcript body
                     tx_gr.df = tx_gr
@@ -576,12 +604,15 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
                     )?;
 
                     // we need to update the t2g mapping for genes
-                    let mut tx_t2g = tx_gr.df().select(["t2g_tx_id", gene_id])?.unique(
+                    let mut tx_t2g = tx_gr.df().select(["t2g_tx_id", gene_id])?.unique_stable(
                         None,
                         UniqueKeepStrategy::Any,
                         None,
                     )?;
-                    tx_t2g.with_column(Series::new("splice_status", vec!["U"; tx_t2g.height()]))?;
+                    tx_t2g.with_column(Column::new(
+                        "splice_status".into(),
+                        vec!["U"; tx_t2g.height()],
+                    ))?;
                     t2g_map.extend(&tx_t2g)?;
                 }
                 _ => {
@@ -609,6 +640,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+            let record_name = std::str::from_utf8(record.name())?;
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
@@ -619,13 +651,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             // TODO : this will be removed if we are deduplicating
             // sequences, but we push it here unconditionally. The
             // current behavior is not wrong, but may be unnecessary.
-            names.push(record.name().to_owned().clone());
+            names.push(record_name.to_owned().clone());
 
             if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
+                        record_name
                     )
                 })?;
             }
@@ -639,7 +671,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
         if aug_type.is_some() {
             // if we are here, we need to add a column for splice_status cuz it is an augmented reference
-            extra_t2g.with_column(Series::new("splice_status", vec!["S"; extra_t2g.height()]))?;
+            extra_t2g.with_column(Column::new(
+                "splice_status".into(),
+                vec!["S"; extra_t2g.height()],
+            ))?;
         }
 
         t2g_map.extend(&extra_t2g)?;
@@ -659,6 +694,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         let mut names = Vec::new();
         for result in reader.records() {
             let record = result?;
+            let record_name = std::str::from_utf8(record.name())?;
 
             let write_record = if let Some(ref mut dup_filt) = sd_callback {
                 dup_filt(&record)
@@ -669,13 +705,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
             // TODO : this will be removed if we are deduplicating
             // sequences, but we push it here unconditionally. The
             // current behavior is not wrong, but may be unnecessary.
-            names.push(record.name().to_owned().clone());
+            names.push(record_name.to_owned().clone());
 
             if write_record {
                 writer.write_record(&record).with_context(|| {
                     format!(
                         "Could not write the sequence of extra spliced sequence {} to the output file",
-                        record.name()
+                        record_name
                     )
                 })?;
             }
@@ -689,7 +725,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
         if aug_type.is_some() {
             // if we are here, we need to add a column for splice_status cuz it is an augmented reference
-            extra_t2g.with_column(Series::new("splice_status", vec!["U"; extra_t2g.height()]))?;
+            extra_t2g.with_column(Column::new(
+                "splice_status".into(),
+                vec!["U"; extra_t2g.height()],
+            ))?;
         }
 
         t2g_map.extend(&extra_t2g)?;
@@ -720,7 +759,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // mask out the t2g rows that are keyed by the duplicates
         // and then *negate* this mask (since we wish to keep everything
         // that is *not* a duplicate).
-        let mask = is_in(column, &Series::new("values", dups))?;
+        let mask = is_in(
+            column.as_materialized_series(),
+            &Series::new("values".into(), dups),
+        )?;
 
         // replace the t2g_map dataframe with the one that has the
         // duplicate mappings removed.
@@ -729,13 +771,13 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     let mut file = std::fs::File::create(&out_t2g_name)?;
     CsvWriter::new(&mut file)
-        .has_header(false)
+        .include_header(false)
         .with_separator(b'\t')
         .finish(&mut t2g_map)?;
 
     let mut file = std::fs::File::create(&out_gid2name)?;
     CsvWriter::new(&mut file)
-        .has_header(false)
+        .include_header(false)
         .with_separator(b'\t')
         .finish(&mut gene_id_to_name)?;
 

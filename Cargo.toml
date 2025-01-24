@@ -1,11 +1,8 @@
 [package]
 name = "roers"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
-authors = [
-  "Dongze He <dhe17@umd.edu>",
-  "Rob Patro <rob@cs.umd.edu>",
-]
+authors = ["Dongze He <dhe17@umd.edu>", "Rob Patro <rob@cs.umd.edu>"]
 description = "A tool to prepare augmented annotations for single-cell RNA-seq analysis."
 license-file = "LICENSE"
 readme = "README.md"
@@ -19,13 +16,7 @@ include = [
   "/README.md",
   "/LICENSE",
 ]
-keywords = [
-  "genomics",
-  "GTF-GFF",
-  "splici",
-  "scRNA-seq",
-  "augmented-reference",
-]
+keywords = ["genomics", "GTF-GFF", "splici", "scRNA-seq", "augmented-reference"]
 categories = ["science", "data-structures"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -38,16 +29,25 @@ name = "roers"
 path = "src/lib/lib.rs"
 
 [dependencies]
-anyhow = "1.0.81"
-clap = { version = "4.5.3", features = ["derive", "wrap_help","cargo"] }
-grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch="dev", version = "0.4.0" }
-polars = { version = "0.45.1", features = ["lazy","dataframe_arithmetic", "checked_arithmetic","rows","dtype-struct", "dtype-categorical", "list_eval","concat_str", "strings"]}
+anyhow = "1.0.95"
+clap = { version = "4.5.27", features = ["derive", "wrap_help", "cargo"] }
+grangers = { git = "https://github.com/COMBINE-lab/grangers.git", branch = "dev", version = "0.5.0" }
+polars = { version = "0.45.1", features = [
+  "lazy",
+  "dataframe_arithmetic",
+  "checked_arithmetic",
+  "rows",
+  "dtype-struct",
+  "dtype-categorical",
+  "list_eval",
+  "concat_str",
+  "strings",
+] }
 peak_alloc = "0.2.1"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-noodles = { version = "0.87.0", features = ["gtf","gff","fasta", "core"] }
-serde = {version = "1.0.197", features = ["derive"]}
-serde_json = "1.0.114"
-itertools = "0.14.1"
-oomfi = "0.1.2"
-xxhash-rust = { version = "0.8.10", features = ["xxh3"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+noodles = { version = "0.89.0", features = ["gtf", "gff", "fasta", "core"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.137"
+itertools = "0.14.0"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

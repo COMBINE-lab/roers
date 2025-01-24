@@ -2,8 +2,6 @@ use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
 use itertools::Itertools;
-//use noodles::fasta;
-//use noodles::fasta::record::{Definition, Sequence};
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
@@ -16,9 +14,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use xxhash_rust::xxh3::xxh3_128_with_seed;
-
-//#[global_allocator]
-//static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
 use clap::Args;
 

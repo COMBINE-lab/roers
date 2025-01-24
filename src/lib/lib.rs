@@ -2,7 +2,8 @@ use anyhow::Context;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use grangers::{options, Grangers};
 use itertools::Itertools;
-use noodles::fasta;
+//use noodles::fasta;
+//use noodles::fasta::record::{Definition, Sequence};
 use polars::lazy::dsl::concat_str;
 use polars::prelude::*;
 use serde::Serialize;
@@ -304,7 +305,7 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
 
     let mut sd = SeqDedup::new();
     let mut sd_callback = if dedup_seqs {
-        Some(|r: &fasta::Record| -> bool { sd.callback(r) })
+        Some(|r: &noodles::fasta::Record| -> bool { sd.callback(r) })
     } else {
         None
     };
@@ -634,10 +635,10 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // create extra file reader
         let mut reader = std::fs::File::open(path)
             .map(std::io::BufReader::new)
-            .map(fasta::Reader::new)?;
+            .map(noodles::fasta::Reader::new)?;
 
         // we crate the writer, and write if not dedup
-        let mut writer = fasta::Writer::new(&fa_out_file);
+        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
 
         // if dedup, we push the records into the seq vector
         // otherwise, we write the records to the output file
@@ -691,9 +692,9 @@ pub fn make_ref(aug_ref_opts: AugRefOpts) -> anyhow::Result<()> {
         // create extra file reader
         let mut reader = std::fs::File::open(path)
             .map(std::io::BufReader::new)
-            .map(fasta::Reader::new)?;
+            .map(noodles::fasta::Reader::new)?;
 
-        let mut writer = fasta::Writer::new(&fa_out_file);
+        let mut writer = noodles::fasta::Writer::new(&fa_out_file);
 
         let mut names = Vec::new();
         for result in reader.records() {
